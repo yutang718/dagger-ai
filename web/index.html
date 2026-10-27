@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dagger-AI · LLM Red-Team Console</title>
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🗡️</text></svg>">
+</head>
+<body>
+<!-- Login -->
+<div id="login" class="login-wrap">
+  <form id="login-form" class="login-card">
+    <div class="brand"><span class="dagger">🗡️</span> Dagger-AI</div>
+    <div class="subtitle">LLM Red-Team Console</div>
+    <input id="l-user" placeholder="username" autocomplete="username" value="admin">
+    <input id="l-pass" type="password" placeholder="password" autocomplete="current-password">
+    <button type="submit">Sign in</button>
+    <div id="login-err" class="err"></div>
+    <div class="legal">For authorized testing of AI systems you own or have written permission to assess.</div>
+  </form>
+</div>
+
+<!-- App -->
+<div id="app" class="app hidden">
+  <aside class="sidebar">
+    <div class="brand"><span class="dagger">🗡️</span> Dagger-AI</div>
+    <nav>
+      <a data-view="dashboard" class="active">▚ Dashboard</a>
+      <a data-view="targets">◎ Targets</a>
+      <a data-view="campaigns">⚔ Campaigns</a>
+      <a data-view="runs">⟳ Runs</a>
+    </nav>
+    <div class="side-foot">
+      <div id="attacker-mode" class="pill"></div>
+      <div class="ver">v<span id="ver"></span></div>
+      <a id="logout" class="logout">Sign out</a>
+    </div>
+  </aside>
+
+  <main id="main">
+    <!-- views injected here -->
+  </main>
+</div>
+
+<div id="drawer" class="drawer hidden"><div class="drawer-body" id="drawer-body"></div></div>
+<div id="toast" class="toast hidden"></div>
+
+<script src="/static/graph.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

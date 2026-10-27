@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Dagger-AI management script. Wraps docker compose so day-to-day ops are one word.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+B='\033[0;34m'; G='\033[0;32m'; Y='\033[0;33m'; R='\033[0;31m'; N='\033[0m'
+info(){ printf "${B}%s${N}\n" "$*"; }
+ok(){   printf "${G}%s${N}\n" "$*"; }
+warn(){ printf "${Y}%s${N}\n" "$*"; }
+err(){  printf "${R}%s${N}\n" "$*" >&2; }
+
+usage(){ cat <<'U'
+Usage: ./dagger <command>
+
+  start        Build (if needed) and start the console + demo lab
+  stop         Stop containers (data in ./data is kept)
+  restart      Restart containers
+  rebuild      Rebuild images after code changes, then start (data kept)
+  logs [n]     Tail logs (default 80 lines)
+  status       Show container + health status
+  reset        Stop and DELETE all data in ./data  (asks to confirm)
+U
+}
+
+start(){
+  [ -f .env ] || { cp .env.example .env; warn "Created .env from template — edit it to set a real password/secret."; }
+  docker compose up -d --build
+  ok "Dagger-AI is up → http://localhost:8099"
+  info "Default login: admin / Admin@12345 (change it in .env)"
+}
+stop(){ docker compose stop; ok "Stopped (data kept in ./data)"; }
+restart(){ docker compose restart; ok "Restarted"; }
+rebuild(){ docker compose up -d --build; ok "Rebuilt → http://localhost:8099"; }
+logs(){ docker compose logs -f --tail "${1:-80}"; }
+status(){ docker compose ps; }
+reset(){
+  warn "This deletes ALL Dagger-AI data in ./data."
+  read -r -p "Type 'yes' to confirm: " a
+  [ "$a" = "yes" ] || { info "Aborted."; exit 0; }
+  docker compose down; rm -rf ./data; ok "Reset complete."
+}
+
+case "${1:-}" in
+  start) start;; stop) stop;; restart) restart;; rebuild) rebuild;;
+  logs) shift; logs "$@";; status) status;; reset) reset;;
+  *) usage;;
+esac

@@ -1,0 +1,52 @@
+services:
+  dagger:
+    build: .
+    image: dagger-ai:1.0
+    container_name: dagger-ai
+    restart: unless-stopped
+    ports:
+      - "8099:8000"
+    environment:
+      DAGGER_ADMIN_USER: ${DAGGER_ADMIN_USER:-admin}
+      DAGGER_ADMIN_PASSWORD: ${DAGGER_ADMIN_PASSWORD:-Admin@12345}
+      DAGGER_SECRET_KEY: ${DAGGER_SECRET_KEY:-change-me-to-a-long-random-string}
+      DAGGER_TOKEN_HOURS: ${DAGGER_TOKEN_HOURS:-12}
+      DAGGER_REQUIRE_AUTHORIZATION: ${DAGGER_REQUIRE_AUTHORIZATION:-true}
+      # Attacker/judge LLM — leave as 'offline' to run with no API key.
+      DAGGER_ATTACKER_PROVIDER: ${DAGGER_ATTACKER_PROVIDER:-offline}
+      DAGGER_ATTACKER_BASE_URL: ${DAGGER_ATTACKER_BASE_URL:-}
+      DAGGER_ATTACKER_API_KEY: ${DAGGER_ATTACKER_API_KEY:-}
+      DAGGER_ATTACKER_MODEL: ${DAGGER_ATTACKER_MODEL:-}
+      DAGGER_DEMO_TARGET_URL: http://vulnerable-target:9009/chat
+    volumes:
+      - ./data:/data
+    networks:
+      - dagger-net     # host access + reaching your authorized external targets
+      - dagger-lab     # reach the isolated bundled demo target
+    depends_on:
+      - vulnerable-target
+
+  # INTENTIONALLY VULNERABLE demo agent. Lab only.
+  # No published host ports; attached ONLY to the internal (no-internet) lab network.
+  vulnerable-target:
+    build: ./vulnerable_target
+    image: dagger-ai-vulnerable-target:1.0
+    container_name: dagger-vulnerable-target
+    restart: unless-stopped
+    networks:
+      - dagger-lab
+    # Hardening: this box is meant to be exploited, so keep it powerless.
+    read_only: false
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    pids_limit: 128
+
+networks:
+  dagger-net:
+    driver: bridge
+  dagger-lab:
+    driver: bridge
+    internal: true   # no route to the internet — contains the demo target
