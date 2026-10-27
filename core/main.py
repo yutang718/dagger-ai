@@ -78,18 +78,21 @@ def do_login(body: LoginIn):
 def meta(_: str = auth.auth_dep):
     return {
         "probes": [
-            {"id": p.id, "name": p.name, "owasp": p.owasp, "atlas": p.atlas,
-             "severity": p.severity, "requires_tools": p.requires_tools,
-             "objective": p.objective, "description": p.description}
+            {"id": p.id, "name": p.name, "category": p.category, "owasp": p.owasp,
+             "owasp_label": taxonomy.owasp_label(p.owasp), "mitre": p.mitre,
+             "mitre_label": taxonomy.mitre_label(p.mitre), "severity": p.severity,
+             "requires_tools": p.requires_tools, "objective": p.objective,
+             "description": p.description}
             for p in all_probes()
         ],
         "strategies": STRATEGIES,
-        "owasp": taxonomy.OWASP_LLM_2025,
-        "atlas": taxonomy.ATLAS,
+        "owasp_llm": taxonomy.OWASP_LLM_2025,
+        "owasp_web": taxonomy.OWASP_WEB_2021,
+        "mitre": taxonomy.MITRE,
         "severity_color": taxonomy.SEVERITY_COLOR,
         "require_authorization": config.REQUIRE_AUTHORIZATION,
         "attacker_online": config.ATTACKER_PROVIDER in ("openai", "anthropic"),
-        "demo_target_url": config.DEMO_TARGET_URL,
+        "version": config.VERSION,
     }
 
 
@@ -125,6 +128,19 @@ def create_demo(_: str = auth.auth_dep, db: Session = Depends(get_session)):
         body_template='{"message": "{{PROMPT}}"}', response_path="reply",
         authorized=True,
         authorization_note="Bundled lab target shipped with Dagger-AI for safe demonstration.",
+    )
+    db.add(t); db.commit()
+    return _target_json(t)
+
+
+@app.post("/api/targets/demo_web")
+def create_demo_web(_: str = auth.auth_dep, db: Session = Depends(get_session)):
+    """Register the bundled intentionally-vulnerable web app (isolated container)."""
+    t = Target(
+        name="Demo Vulnerable Web App (bundled, isolated)",
+        kind="web_app", endpoint=config.DEMO_WEB_URL,
+        authorized=True,
+        authorization_note="Bundled lab web app shipped with Dagger-AI for safe demonstration.",
     )
     db.add(t); db.commit()
     return _target_json(t)
@@ -246,18 +262,21 @@ def dashboard(_: str = auth.auth_dep, db: Session = Depends(get_session)):
     sev_totals = {s: 0 for s in taxonomy.SEVERITY_ORDER}
     for sev, n in db.execute(select(Finding.severity, func.count()).group_by(Finding.severity)):
         sev_totals[sev] = n
-    owasp_hits = {k: 0 for k in taxonomy.OWASP_LLM_2025}
+    llm_hits = {k: 0 for k in taxonomy.OWASP_LLM_2025}
+    web_hits = {k: 0 for k in taxonomy.OWASP_WEB_2021}
     for ow, n in db.execute(select(Finding.owasp, func.count()).group_by(Finding.owasp)):
-        if ow in owasp_hits:
-            owasp_hits[ow] = n
+        if ow in llm_hits:
+            llm_hits[ow] = n
+        elif ow in web_hits:
+            web_hits[ow] = n
     return {
         "targets": db.scalar(select(func.count()).select_from(Target)),
         "campaigns": db.scalar(select(func.count()).select_from(Campaign)),
         "runs": db.scalar(select(func.count()).select_from(Run)),
         "findings": db.scalar(select(func.count()).select_from(Finding)),
         "severity_totals": sev_totals,
-        "owasp_hits": owasp_hits,
-        "owasp_labels": taxonomy.OWASP_LLM_2025,
+        "owasp_llm_hits": llm_hits, "owasp_llm_labels": taxonomy.OWASP_LLM_2025,
+        "owasp_web_hits": web_hits, "owasp_web_labels": taxonomy.OWASP_WEB_2021,
         "recent_runs": [_run_brief(r) for r in
                         db.scalars(select(Run).order_by(Run.id.desc()).limit(8))],
     }

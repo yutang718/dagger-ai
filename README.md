@@ -1,11 +1,17 @@
 # 🗡️ Dagger-AI
 
 **An LLM-driven AI red-teaming platform for authorized testing of AI systems.**
-Point it at a chatbot, an LLM API, or a tool-enabled agent **you own or are
-permitted to assess**, and Dagger-AI runs structured adversarial campaigns —
-prompt injection, jailbreaks, system-prompt leakage, data exfiltration, and
-agent tool-abuse — then shows you every step, the evidence, and how to fix it,
-in a visual console. Self-hosted, one command, no API key required.
+Point it at a chatbot, an LLM API, a tool-enabled agent, **or a web application**
+**you own or are permitted to assess**, and Dagger-AI runs structured adversarial
+campaigns across **two attack surfaces**:
+
+- **AI / LLM** — prompt injection, jailbreaks, system-prompt leakage, data
+  exfiltration, agent tool-abuse (→ shell) · *OWASP LLM Top 10 + MITRE ATLAS*
+- **Web apps** — SQLi, command injection, SSRF, XSS, IDOR, default creds,
+  misconfig, version disclosure · *OWASP Top 10 (2021) + MITRE ATT&CK*
+
+…then shows you every step, the PoC evidence, and how to fix it, in a visual
+console. Self-hosted, one command, no API key required.
 
 > ⚖️ **Authorized use only.** Dagger-AI is a defensive security tool. Only run
 > campaigns against AI systems you own or have explicit written permission to
@@ -37,12 +43,24 @@ can watch a full exploit chain — up to **command execution / shell** — safel
 
 - **Structured attack campaigns** — pick probes + an orchestration strategy
   against one target.
-- **Probes (attack modules)**, each mapped to OWASP LLM Top 10 (2025) + MITRE ATLAS:
-  - `prompt_injection` — direct instruction override (LLM01)
-  - `jailbreak` — persona / hypothetical / refusal-suppression (LLM01 · jailbreak)
-  - `system_prompt_leak` — recover hidden instructions (LLM07)
-  - `data_exfiltration` — PII / secret disclosure (LLM02)
-  - `agent_tool_abuse` — prompt-injection → tool/command execution (LLM06, **critical**)
+- **Two probe families** covering both attack surfaces:
+
+  **AI / LLM probes** — OWASP LLM Top 10 (2025) + MITRE ATLAS:
+  - `prompt_injection` — direct instruction override (LLM01 · AML.T0051)
+  - `jailbreak` — persona / hypothetical / refusal-suppression (LLM01 · AML.T0054)
+  - `system_prompt_leak` — recover hidden instructions (LLM07 · AML.T0057)
+  - `data_exfiltration` — PII / secret disclosure (LLM02 · AML.T0057)
+  - `agent_tool_abuse` — prompt-injection → tool/command execution (LLM06 · AML.T0053, **critical**)
+
+  **Web-app probes** — OWASP Top 10 (2021) + MITRE ATT&CK:
+  - `sql_injection` — error/boolean SQLi (A03 · T1190, **critical**)
+  - `command_injection` — OS command execution (A03 · T1059, **critical**)
+  - `ssrf` — server-side request forgery to internal metadata (A10 · T1190, **critical**)
+  - `reflected_xss` — unescaped reflection (A03 · T1059.007)
+  - `broken_access_control` — IDOR / missing authz (A01 · T1190)
+  - `auth_failures` — default/weak credentials (A07 · T1110)
+  - `security_misconfiguration` — missing headers / verbose errors (A05 · T1595)
+  - `vulnerable_components` — version-banner disclosure (A06 · T1595.002)
 - **Orchestration strategies**
   - `single_turn` — fire each payload once (Garak-style sweep)
   - `crescendo` — benign→malicious multi-turn escalation (PyRIT-style)
@@ -71,15 +89,19 @@ cd dagger-ai
 Open **http://localhost:8099** → sign in with `admin` / `Admin@12345`
 (change these in `.env`).
 
-### Try a full exploit chain safely (2 minutes)
+### Try full exploit chains safely (2 minutes)
 
-1. **Targets →** *Add bundled demo agent* (it's pre-authorized; runs isolated).
-2. **Campaigns →** *New campaign* → pick the demo agent, select **all probes**
-   (including `agent_tool_abuse`), choose a strategy, **Create**.
-3. Hit **▶ Run**. Watch the attack-chain graph light up live.
-4. Click the red **`agent_tool_abuse`** node → see the prompt-injection that
-   drove the agent's shell tool to run `id` / read `cat /flag.txt` —
-   the `DAGGER-FLAG{…}` trophy in the evidence box is proof of RCE.
+The platform ships **two** isolated, pre-authorized lab targets:
+
+**A) LLM agent** — **Targets →** *Demo LLM agent* → **Campaigns →** pick it,
+select all AI probes (incl. `agent_tool_abuse`), **Run**. Click the red
+`agent_tool_abuse` node → the prompt-injection drove the agent's shell tool to
+run `id` / `cat /flag.txt`; the `DAGGER-FLAG{…}` trophy is proof of RCE.
+
+**B) Web app** — **Targets →** *Demo web app* → **Campaigns →** pick it
+(the web probes appear automatically), **Run**. You'll get 8 findings incl.
+**critical SQLi, command injection (`uid=…`), and SSRF to cloud-metadata
+creds** — each with the request/response trail and MITRE ATT&CK mapping.
 
 ### Test your own AI system
 
@@ -125,23 +147,25 @@ Data (SQLite + snapshots) lives in `./data` via a bind mount, so rebuilds and
 ## Architecture
 
 ```
-┌────────────── dagger-net (bridge) ──────────────┐
-│  dagger-ai  :8099                                │
-│   FastAPI + SQLite + static console (web/)       │
-│   engine → orchestrators → probes → judge        │
-│         │  (your authorized external targets) ───┼──▶ internet
-│         ▼                                         │
-├──────── dagger-lab (internal, NO internet) ──────┤
-│  vulnerable-target :9009  (intentionally weak)   │
-└──────────────────────────────────────────────────┘
+┌────────────── dagger-net (bridge) ───────────────────┐
+│  dagger-ai  :8099                                     │
+│   FastAPI + SQLite + static console (web/)            │
+│   engine → (orchestrators→LLM probes | web probes)    │
+│         │  (your authorized external targets) ────────┼──▶ internet
+│         ▼                                              │
+├──────── dagger-lab (internal, NO internet) ───────────┤
+│  vulnerable-target  :9009  (weak LLM agent)           │
+│  vulnerable-webapp  :9010  (weak OWASP web app)       │
+└───────────────────────────────────────────────────────┘
 ```
 
-- `core/probes/` — attack modules + payload library
-- `core/orchestrators/` — single-turn / crescendo / tree-of-attacks
+- `core/probes/builtin.py` — LLM attack modules · `core/probes/web.py` — web attack modules
+- `core/orchestrators/` — single-turn / crescendo / tree-of-attacks (LLM probes)
 - `core/engine.py` — runs campaigns, persists attempts+steps, distills findings
 - `core/judge.py` — LLM or heuristic success scoring (evidence required)
+- `core/taxonomy.py` — OWASP LLM/Web + MITRE ATLAS/ATT&CK maps
 - `web/` — zero-dependency console (SVG attack graph, no CDN)
-- `vulnerable_target/` — bundled lab agent for safe end-to-end demos
+- `vulnerable_target/` · `vulnerable_webapp/` — bundled lab targets for safe demos
 
 ---
 

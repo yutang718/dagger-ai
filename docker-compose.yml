@@ -18,13 +18,15 @@ services:
       DAGGER_ATTACKER_API_KEY: ${DAGGER_ATTACKER_API_KEY:-}
       DAGGER_ATTACKER_MODEL: ${DAGGER_ATTACKER_MODEL:-}
       DAGGER_DEMO_TARGET_URL: http://vulnerable-target:9009/chat
+      DAGGER_DEMO_WEB_URL: http://vulnerable-webapp:9010
     volumes:
       - ./data:/data
     networks:
       - dagger-net     # host access + reaching your authorized external targets
-      - dagger-lab     # reach the isolated bundled demo target
+      - dagger-lab     # reach the isolated bundled demo targets
     depends_on:
       - vulnerable-target
+      - vulnerable-webapp
 
   # INTENTIONALLY VULNERABLE demo agent. Lab only.
   # No published host ports; attached ONLY to the internal (no-internet) lab network.
@@ -37,6 +39,22 @@ services:
       - dagger-lab
     # Hardening: this box is meant to be exploited, so keep it powerless.
     read_only: false
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    pids_limit: 128
+
+  # INTENTIONALLY VULNERABLE demo web app (OWASP Top 10). Lab only.
+  # No published host ports; attached ONLY to the internal (no-internet) lab network.
+  vulnerable-webapp:
+    build: ./vulnerable_webapp
+    image: dagger-ai-vulnerable-webapp:1.0
+    container_name: dagger-vulnerable-webapp
+    restart: unless-stopped
+    networks:
+      - dagger-lab
     security_opt:
       - no-new-privileges:true
     cap_drop:

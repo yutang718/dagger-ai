@@ -55,7 +55,8 @@ MAX_TURNS = int(_env("DAGGER_MAX_TURNS", default="8"))
 MAX_ATTEMPTS = int(_env("DAGGER_MAX_ATTEMPTS", default="60"))
 REQUEST_TIMEOUT = int(_env("DAGGER_REQUEST_TIMEOUT", default="60"))
 
-# The bundled intentionally-vulnerable demo target (isolated container).
+# The bundled intentionally-vulnerable demo targets (isolated containers).
 DEMO_TARGET_URL = _env("DAGGER_DEMO_TARGET_URL", default="http://vulnerable-target:9009/chat")
+DEMO_WEB_URL = _env("DAGGER_DEMO_WEB_URL", default="http://vulnerable-webapp:9010")
 
 VERSION = "1.0.0"

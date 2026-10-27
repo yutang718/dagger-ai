@@ -47,3 +47,51 @@ def test_vulnerable_agent_reads_flag():
     # flag file only exists in the container image; locally the tool runs but the
     # file may be absent — assert the tool at least executed.
     assert "shell tool" in out
+
+
+# --- web probes against the bundled vulnerable web app (in-process) ----------
+from fastapi.testclient import TestClient                    # noqa: E402
+from vulnerable_webapp.app import app as webapp              # noqa: E402
+
+_client = TestClient(webapp)
+_base = str(_client.base_url)
+
+
+def _run(pid):
+    return get(pid).execute(_base, _client)
+
+
+def test_web_probe_categories():
+    web = {p.id for p in all_probes() if p.category == "web"}
+    assert {"sql_injection", "command_injection", "reflected_xss", "broken_access_control",
+            "security_misconfiguration", "vulnerable_components", "auth_failures"} <= web
+
+
+def test_sql_injection_detected():
+    assert _run("sql_injection")[0].success
+
+
+def test_command_injection_detected():
+    a = _run("command_injection")[0]
+    assert a.success and "uid=" in a.evidence
+
+
+def test_reflected_xss_detected():
+    assert _run("reflected_xss")[0].success
+
+
+def test_idor_detected():
+    a = _run("broken_access_control")[0]
+    assert a.success and "@" in a.evidence
+
+
+def test_default_credentials_detected():
+    assert _run("auth_failures")[0].success
+
+
+def test_security_misconfiguration_detected():
+    assert _run("security_misconfiguration")[0].success
+
+
+def test_version_banner_detected():
+    assert _run("vulnerable_components")[0].success

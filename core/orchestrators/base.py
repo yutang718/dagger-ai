@@ -7,29 +7,8 @@ offline mutation strategy, so every strategy works without an API key.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-
 from ..llm_client import LLMClient
-
-
-@dataclass
-class StepRec:
-    role: str
-    prompt: str
-    response: str
-    note: str = ""
-    latency_ms: int = 0
-
-
-@dataclass
-class AttemptRec:
-    technique: str
-    objective: str
-    steps: list[StepRec] = field(default_factory=list)
-    success: bool = False
-    score: float = 0.0
-    evidence: str = ""
-    rationale: str = ""
+from ..records import AttemptRec, StepRec  # re-exported for existing imports
 
 
 _ATTACKER_SYS = (

@@ -64,10 +64,26 @@ async function viewDashboard() {
     </div>
     <div class="grid2">
       <div class="panel"><h3>Findings by severity</h3>${donut(sev)}</div>
-      <div class="panel"><h3>OWASP LLM Top 10 coverage</h3>${owaspBars(d)}</div>
+      <div class="panel"><h3>Findings by domain</h3>${domainSplit(d)}</div>
+    </div>
+    <div class="grid2">
+      <div class="panel"><h3>OWASP LLM Top 10 (2025)</h3>${owaspBars(d.owasp_llm_hits,d.owasp_llm_labels)}</div>
+      <div class="panel"><h3>OWASP Web Top 10 (2021)</h3>${owaspBars(d.owasp_web_hits,d.owasp_web_labels)}</div>
     </div>
     <div class="panel"><h3>Recent runs</h3>${runsTable(d.recent_runs)}</div>`;
   bindRunRows();
+}
+function domainSplit(d){
+  const llm=Object.values(d.owasp_llm_hits).reduce((a,b)=>a+b,0);
+  const web=Object.values(d.owasp_web_hits).reduce((a,b)=>a+b,0);
+  const tot=Math.max(1,llm+web);
+  return `<div style="padding:8px 0">
+    <div class="spread"><span>🤖 LLM / AI systems</span><b>${llm}</b></div>
+    <div class="bar"><i style="width:${llm/tot*100}%"></i></div>
+    <div class="spread" style="margin-top:14px"><span>🌐 Web applications</span><b>${web}</b></div>
+    <div class="bar"><i style="width:${web/tot*100}%;background:linear-gradient(90deg,#f76808,#f5a623)"></i></div>
+    <p class="no" style="font-size:12px;margin-top:14px">Dagger-AI probes both AI-specific (OWASP LLM
+    + MITRE ATLAS) and classic web (OWASP Web + MITRE ATT&CK) attack surfaces.</p></div>`;
 }
 const kpi = (n,l) => `<div class="card kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`;
 
@@ -91,10 +107,10 @@ function donut(sev) {
     <div style="flex:1;min-width:160px">${legend}</div></div>`;
 }
 
-function owaspBars(d) {
-  const max = Math.max(1, ...Object.values(d.owasp_hits));
-  return Object.entries(d.owasp_labels).map(([k,label])=>{
-    const n=d.owasp_hits[k]||0;
+function owaspBars(hits, labels) {
+  const max = Math.max(1, ...Object.values(hits));
+  return Object.entries(labels).map(([k,label])=>{
+    const n=hits[k]||0;
     return `<div style="margin:9px 0"><div class="spread"><span class="mono" style="font-size:12px">
       <span class="tag">${k}</span> ${esc(label)}</span><b>${n}</b></div>
       <div class="bar"><i style="width:${n/max*100}%"></i></div></div>`;
@@ -106,7 +122,8 @@ async function viewTargets() {
   const ts = await api("/targets");
   main().innerHTML = `
     <div class="spread"><div><h1>Targets</h1><p class="lead">AI systems under test.</p></div>
-      <div class="row"><button class="ghost" id="add-demo">+ Add bundled demo agent</button>
+      <div class="row"><button class="ghost" id="add-demo">+ Demo LLM agent</button>
+      <button class="ghost" id="add-demo-web">+ Demo web app</button>
       <button id="add-target">+ New target</button></div></div>
     <div class="warn">⚖ Only run campaigns against systems you own or are explicitly authorized to test.
       ${S.meta.require_authorization ? "Each target must carry an authorization note before it can be attacked." : ""}</div>
@@ -121,7 +138,9 @@ async function viewTargets() {
       </tbody></table>`: `<div class="empty">No targets yet. Add the bundled demo agent to try a full exploit chain safely.</div>`}
     </div>`;
   $("#add-demo").onclick = async () => { await api("/targets/demo",{method:"POST"});
-    toast("Demo agent registered (isolated lab target)"); viewTargets(); };
+    toast("Demo LLM agent registered (isolated lab target)"); viewTargets(); };
+  $("#add-demo-web").onclick = async () => { await api("/targets/demo_web",{method:"POST"});
+    toast("Demo web app registered (isolated lab target)"); viewTargets(); };
   $("#add-target").onclick = targetForm;
   main().querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{
     await api("/targets/"+b.dataset.del,{method:"DELETE"}); viewTargets(); });
@@ -130,19 +149,35 @@ async function viewTargets() {
 
 function targetForm() {
   openDrawer(`<h2>New target</h2>
-    <label>Name</label><input id="t-name" placeholder="My chatbot (staging)">
-    <label>Endpoint URL</label><input id="t-ep" placeholder="https://host/v1/chat/completions">
-    <label>HTTP method</label><input id="t-method" value="POST">
-    <label>Request body template <span class="no">(use {{PROMPT}})</span></label>
-    <textarea id="t-body" rows="4">{"model":"your-model","messages":[{"role":"user","content":"{{PROMPT}}"}]}</textarea>
-    <label>Response text path <span class="no">(dotted)</span></label>
-    <input id="t-path" value="choices.0.message.content">
+    <label>Type</label>
+    <select id="t-kind">
+      <option value="http_chat">LLM / chat endpoint (AI probes)</option>
+      <option value="web_app">Web application (OWASP web probes)</option>
+    </select>
+    <label>Name</label><input id="t-name" placeholder="My app (staging)">
+    <label id="ep-lab">Endpoint URL</label>
+    <input id="t-ep" placeholder="https://host/v1/chat/completions">
+    <div id="chat-fields">
+      <label>HTTP method</label><input id="t-method" value="POST">
+      <label>Request body template <span class="no">(use {{PROMPT}})</span></label>
+      <textarea id="t-body" rows="4">{"model":"your-model","messages":[{"role":"user","content":"{{PROMPT}}"}]}</textarea>
+      <label>Response text path <span class="no">(dotted)</span></label>
+      <input id="t-path" value="choices.0.message.content">
+    </div>
     <div class="row" style="margin-top:18px"><button id="t-save">Create</button>
       <button class="ghost" onclick="closeDrawer()">Cancel</button></div>`);
+  const sync=()=>{ const web=$("#t-kind").value==="web_app";
+    $("#chat-fields").style.display=web?"none":"block";
+    $("#ep-lab").textContent=web?"Base URL (e.g. https://app.example.com)":"Endpoint URL";
+    $("#t-ep").placeholder=web?"https://app.example.com":"https://host/v1/chat/completions"; };
+  $("#t-kind").onchange=sync; sync();
   $("#t-save").onclick = async () => {
+    const web=$("#t-kind").value==="web_app";
     try{ await api("/targets",{method:"POST",body:JSON.stringify({
-      name:$("#t-name").value, endpoint:$("#t-ep").value, http_method:$("#t-method").value,
-      body_template:$("#t-body").value, response_path:$("#t-path").value })});
+      name:$("#t-name").value, kind:$("#t-kind").value, endpoint:$("#t-ep").value,
+      http_method: web?"GET":$("#t-method").value,
+      body_template: web?"":$("#t-body").value,
+      response_path: web?"":$("#t-path").value })});
       closeDrawer(); viewTargets(); toast("Target created"); }
     catch(e){ toast(e.message); }
   };
@@ -188,31 +223,42 @@ async function viewCampaigns() {
 
 function campaignForm(ts){
   if(!ts.length){ toast("Add a target first"); return; }
-  const probes = S.meta.probes.map(p=>`
-    <label class="probe" data-p="${p.id}">
-      <input type="checkbox" value="${p.id}" ${p.id!=="agent_tool_abuse"?"checked":""}>
-      <div><div class="pn">${esc(p.name)} <span class="badge sev-${p.severity}">${p.severity}</span>
-        <span class="tag">${p.owasp}</span></div>
-      <div class="pd">${esc(p.description)}${p.requires_tools?" · needs a tool-enabled target":""}</div></div>
-    </label>`).join("");
   const strat = Object.entries(S.meta.strategies).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join("");
-  const topts = ts.map(t=>`<option value="${t.id}">${esc(t.name)}${t.authorized?"":" (not authorized)"}</option>`).join("");
+  const topts = ts.map(t=>`<option value="${t.id}" data-kind="${t.kind}">${esc(t.name)}${t.authorized?"":" (not authorized)"}</option>`).join("");
   openDrawer(`<h2>New campaign</h2>
-    <label>Name</label><input id="c-name" placeholder="Baseline LLM assessment">
+    <label>Name</label><input id="c-name" placeholder="Baseline assessment">
     <label>Target</label><select id="c-target">${topts}</select>
-    <label>Orchestration strategy</label><select id="c-strat">${strat}</select>
-    <label>Max turns (multi-turn strategies)</label><input id="c-turns" type="number" value="4" min="1" max="8">
-    <label>Probes</label><div style="display:grid;gap:8px">${probes}</div>
+    <div id="strat-wrap"><label>Orchestration strategy</label><select id="c-strat">${strat}</select>
+    <label>Max turns (multi-turn strategies)</label><input id="c-turns" type="number" value="4" min="1" max="8"></div>
+    <label>Probes <span id="probe-domain" class="no"></span></label>
+    <div id="probe-list" style="display:grid;gap:8px"></div>
     <div class="row" style="margin-top:18px"><button id="c-save">Create campaign</button>
       <button class="ghost" onclick="closeDrawer()">Cancel</button></div>`);
-  main().querySelectorAll(".probe").forEach(p=>{ const cb=p.querySelector("input");
-    const sync=()=>p.classList.toggle("on",cb.checked); cb.onchange=sync; sync(); });
+  const renderProbes=()=>{
+    const opt=$("#c-target").selectedOptions[0];
+    const kind=opt?opt.dataset.kind:"http_chat";
+    const cat = kind==="web_app" ? "web" : "llm";
+    $("#probe-domain").textContent = cat==="web"
+      ? "· OWASP Web Top 10 + MITRE ATT&CK" : "· OWASP LLM Top 10 + MITRE ATLAS";
+    $("#strat-wrap").style.display = cat==="web" ? "none" : "block";
+    const list=S.meta.probes.filter(p=>p.category===cat);
+    $("#probe-list").innerHTML = list.map(p=>`
+      <label class="probe" data-p="${p.id}">
+        <input type="checkbox" value="${p.id}" checked>
+        <div><div class="pn">${esc(p.name)} <span class="badge sev-${p.severity}">${p.severity}</span>
+          <span class="tag">${p.owasp}</span> <span class="tag">${p.mitre}</span></div>
+        <div class="pd">${esc(p.description)}${p.requires_tools?" · needs a tool-enabled target":""}</div></div>
+      </label>`).join("");
+    $("#probe-list").querySelectorAll(".probe").forEach(p=>{ const cb=p.querySelector("input");
+      const s=()=>p.classList.toggle("on",cb.checked); cb.onchange=s; s(); });
+  };
+  $("#c-target").onchange=renderProbes; renderProbes();
   $("#c-save").onclick = async () => {
-    const chosen=[...main().querySelectorAll(".probe input:checked")].map(i=>i.value);
+    const chosen=[...$("#probe-list").querySelectorAll("input:checked")].map(i=>i.value);
     if(!chosen.length){ toast("Pick at least one probe"); return; }
     try{ await api("/campaigns",{method:"POST",body:JSON.stringify({
       name:$("#c-name").value||"Untitled", target_id:+$("#c-target").value, probes:chosen,
-      orchestrator:$("#c-strat").value, max_turns:+$("#c-turns").value })});
+      orchestrator:$("#c-strat").value, max_turns:+($("#c-turns").value||4) })});
       closeDrawer(); viewCampaigns(); toast("Campaign created"); }
     catch(e){ toast(e.message); }
   };

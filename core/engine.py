@@ -10,7 +10,9 @@ from __future__ import annotations
 import threading
 from datetime import datetime
 
-from . import taxonomy
+import httpx
+
+from . import config, taxonomy
 from .db import SessionLocal
 from .models import Attempt, Campaign, Finding, Run, Step, Target
 from .orchestrators import AttackerAgent
@@ -44,6 +46,8 @@ def _execute(run_id: int) -> None:
 
         attacker = AttackerAgent()
         tclient = TargetClient(target)
+        http = httpx.Client(timeout=config.REQUEST_TIMEOUT, follow_redirects=True,
+                            headers={"User-Agent": "Dagger-AI/1.0"})
         counts = {"attempts": 0, "success": 0}
         sev_counts = {s: 0 for s in taxonomy.SEVERITY_ORDER}
 
@@ -54,14 +58,23 @@ def _execute(run_id: int) -> None:
             probe = get_probe(probe_id)
             if not probe:
                 continue
-            attempts = orchestrate(campaign.orchestrator, probe, tclient, attacker,
-                                   campaign.max_turns or 6)
+            if probe.category == "web":
+                try:
+                    attempts = probe.execute(target.endpoint or "", http)
+                except Exception as e:
+                    from .records import AttemptRec, StepRec
+                    attempts = [AttemptRec(probe.id, probe.objective,
+                                [StepRec("request", "(web probe)", f"[probe error] {e}", "")],
+                                False, 0.0, "", f"probe error: {e}")]
+            else:
+                attempts = orchestrate(campaign.orchestrator, probe, tclient, attacker,
+                                       campaign.max_turns or 6)
             for a in attempts:
                 counts["attempts"] += 1
                 sev = probe.severity if a.success else "info"
                 row = Attempt(
                     run_id=run_id, probe=probe.id, technique=a.technique,
-                    owasp=probe.owasp, atlas=probe.atlas, severity=sev,
+                    owasp=probe.owasp, atlas=probe.mitre, severity=sev,
                     success=a.success, score=a.score, objective=a.objective,
                     rationale=a.rationale, evidence=a.evidence,
                 )
@@ -96,15 +109,19 @@ def _execute(run_id: int) -> None:
             db.commit()
     finally:
         _RUNNING.discard(run_id)
+        try:
+            http.close()
+        except Exception:
+            pass
         db.close()
 
 
 def _finding(run_id, attempt_id, probe, a) -> Finding:
-    owlabel = taxonomy.OWASP_LLM_2025.get(probe.owasp, probe.owasp)
+    owlabel = taxonomy.owasp_label(probe.owasp)
     return Finding(
         run_id=run_id, attempt_id=attempt_id,
         title=f"{probe.name} — {owlabel}",
-        severity=probe.severity, owasp=probe.owasp, atlas=probe.atlas,
+        severity=probe.severity, owasp=probe.owasp, atlas=probe.mitre,
         description=f"{probe.description}\n\nTechnique: {a.technique}\nJudge: {a.rationale}",
         evidence=a.evidence or "(see attempt steps)",
         remediation=probe.remediation,

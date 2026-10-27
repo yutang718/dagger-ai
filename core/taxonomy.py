@@ -1,11 +1,13 @@
-"""Vulnerability taxonomy fused from the leading AI red-teaming projects.
+"""Vulnerability taxonomy fused from the leading red-teaming projects.
 
-- OWASP Top 10 for LLM Applications (2025)   -> owasp
-- MITRE ATLAS tactic mapping                  -> atlas
-- Severity model (DeepTeam / promptfoo style) -> severity
+Two OWASP families are supported side by side:
+  * OWASP Top 10 for LLM Applications (2025)  -> owasp code LLM01..LLM10
+  * OWASP Top 10 for Web Applications (2021)   -> owasp code A01..A10
 
-Each probe (attack module) declares which taxonomy entries it exercises so
-findings can be grouped, scored and visualised consistently.
+MITRE mapping covers both domains:
+  * MITRE ATLAS   (AI/ML adversary tactics)    -> AML.T####
+  * MITRE ATT&CK  (enterprise techniques)      -> T####
+Probes declare a single `mitre` id; lookups fall back across both maps.
 """
 from __future__ import annotations
 
@@ -23,7 +25,23 @@ OWASP_LLM_2025 = {
     "LLM10": "Unbounded Consumption",
 }
 
-# MITRE ATLAS tactics most relevant to LLM red teaming.
+# OWASP Top 10 for Web Applications 2021
+OWASP_WEB_2021 = {
+    "A01": "Broken Access Control",
+    "A02": "Cryptographic Failures",
+    "A03": "Injection",
+    "A04": "Insecure Design",
+    "A05": "Security Misconfiguration",
+    "A06": "Vulnerable and Outdated Components",
+    "A07": "Identification and Authentication Failures",
+    "A08": "Software and Data Integrity Failures",
+    "A09": "Security Logging and Monitoring Failures",
+    "A10": "Server-Side Request Forgery (SSRF)",
+}
+
+OWASP_ALL = {**OWASP_LLM_2025, **OWASP_WEB_2021}
+
+# MITRE ATLAS tactics (AI/ML).
 ATLAS = {
     "AML.T0051": "LLM Prompt Injection",
     "AML.T0054": "LLM Jailbreak",
@@ -31,6 +49,31 @@ ATLAS = {
     "AML.T0053": "LLM Plugin Compromise",
     "AML.T0048": "External Harms",
 }
+
+# MITRE ATT&CK enterprise techniques relevant to web exploitation.
+ATTACK = {
+    "T1190": "Exploit Public-Facing Application",
+    "T1059": "Command and Scripting Interpreter",
+    "T1059.007": "JavaScript (XSS)",
+    "T1110": "Brute Force",
+    "T1212": "Exploitation for Credential Access",
+    "T1083": "File and Directory Discovery",
+    "T1595": "Active Scanning",
+    "T1595.002": "Vulnerability Scanning",
+    "T1552": "Unsecured Credentials",
+}
+
+# Unified MITRE lookup (ATLAS + ATT&CK).
+MITRE = {**ATLAS, **ATTACK}
+
+
+def mitre_label(mid: str) -> str:
+    return MITRE.get(mid, mid)
+
+
+def owasp_label(code: str) -> str:
+    return OWASP_ALL.get(code, code)
+
 
 # Ordered worst -> best for sorting and colour scales in the UI.
 SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"]
