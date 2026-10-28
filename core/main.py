@@ -253,11 +253,17 @@ def target_profile(tid: int, _: str = auth.auth_dep, db: Session = Depends(get_s
                                   .where(Attempt.run_id.in_(run_ids)).limit(5000)):
             if resp:
                 blobs.append(resp)
+        # De-duplicate across runs first: the same issue (title+owasp+evidence)
+        # found in several engagements of this target is ONE distinct vulnerability.
+        distinct = {}
         for f in db.scalars(select(Finding).where(Finding.run_id.in_(run_ids))):
+            dk = (f.title.strip().lower(), f.owasp or "", (f.evidence or "")[:200].strip().lower())
+            distinct.setdefault(dk, f)
+        for f in distinct.values():
             findings.append({"title": f.title, "severity": f.severity, "owasp": f.owasp,
                              "evidence": f.evidence})
             sev[f.severity] = sev.get(f.severity, 0) + 1
-            # per-target vulnerabilities, grouped by issue class, with remediation
+            # vulnerabilities grouped by issue class; count = distinct issues in it
             key = (_cls(f.title).lower(), f.owasp or "", f.severity)
             v = vulns.get(key)
             if v:
@@ -395,16 +401,28 @@ def stop(rid: int, _: str = auth.auth_dep):
 # ----------------------------------------------------------------- dashboard
 @app.get("/api/dashboard")
 def dashboard(_: str = auth.auth_dep, db: Session = Depends(get_session)):
+    # Count DISTINCT vulnerabilities per target (the same issue re-found across a
+    # target's runs is one), so totals are meaningful rather than inflated by
+    # repeated scans.
+    run_target = {rid: tid for rid, tid in db.execute(
+        select(Run.id, Campaign.target_id).join(Campaign, Run.campaign_id == Campaign.id)).all()}
     sev_totals = {s: 0 for s in taxonomy.SEVERITY_ORDER}
-    for sev, n in db.execute(select(Finding.severity, func.count()).group_by(Finding.severity)):
-        sev_totals[sev] = n
     llm_hits = {k: 0 for k in taxonomy.OWASP_LLM_2025}
     web_hits = {k: 0 for k in taxonomy.OWASP_WEB_2021}
-    for ow, n in db.execute(select(Finding.owasp, func.count()).group_by(Finding.owasp)):
-        if ow in llm_hits:
-            llm_hits[ow] = n
-        elif ow in web_hits:
-            web_hits[ow] = n
+    seen = set()
+    findings_count = 0
+    for f in db.scalars(select(Finding)):
+        tid = run_target.get(f.run_id)
+        dk = (tid, f.title.strip().lower(), f.owasp or "", (f.evidence or "")[:200].strip().lower())
+        if dk in seen:
+            continue
+        seen.add(dk)
+        findings_count += 1
+        sev_totals[f.severity] = sev_totals.get(f.severity, 0) + 1
+        if f.owasp in llm_hits:
+            llm_hits[f.owasp] += 1
+        elif f.owasp in web_hits:
+            web_hits[f.owasp] += 1
     # Aggregate LLM token usage + estimated cost across all runs.
     usage = {"calls": 0, "total_tokens": 0, "cost_usd": 0.0}
     for (summ,) in db.execute(select(Run.summary)):
@@ -418,7 +436,7 @@ def dashboard(_: str = auth.auth_dep, db: Session = Depends(get_session)):
         "targets": db.scalar(select(func.count()).select_from(Target)),
         "campaigns": db.scalar(select(func.count()).select_from(Campaign)),
         "runs": db.scalar(select(func.count()).select_from(Run)),
-        "findings": db.scalar(select(func.count()).select_from(Finding)),
+        "findings": findings_count,
         "severity_totals": sev_totals,
         "owasp_llm_hits": llm_hits, "owasp_llm_labels": taxonomy.OWASP_LLM_2025,
         "owasp_web_hits": web_hits, "owasp_web_labels": taxonomy.OWASP_WEB_2021,
