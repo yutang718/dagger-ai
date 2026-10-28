@@ -448,7 +448,7 @@ function renderRun(d){
     <div class="panel"><h3>${t("run.graphTitle")}</h3>
       <div id="graph"></div>
       <p class="no" style="font-size:12px;margin-top:8px">${t("run.graphNote")}</p></div>
-    <div class="panel"><h3>${t("run.findingsTitle",{n:d.findings.length})}</h3>
+    <div class="panel"><h3>${t("run.findingsTitle",{n:dedupFindings(d.findings).length})}</h3>
       <div class="scrollbox">${findingsList(d.findings)}</div></div>
     <div class="panel"><h3>${t("run.phasesTitle")}</h3>${phaseGroups(steps)}</div>
     ${validation?playbookPanel(t("run.validation"),validation):""}
@@ -498,13 +498,28 @@ function atkRow(a){
       ${sub?`<div class="tc">${esc(sub)}</div>`:""}</span>
     <span class="chev">›</span></div>`;
 }
+/* Group findings by issue class (title prefix before ":"/"—" + owasp + severity)
+   so many near-identical findings (e.g. dozens of "Sensitive path exposed: /X")
+   collapse to one row with an ×N count, instead of flooding the list. */
+const _findClass = f => (f.title||"").split(/[:：—]/)[0].trim();
+function dedupFindings(fs){
+  const seen={}, out=[];
+  (fs||[]).forEach(f=>{
+    const k=_findClass(f).toLowerCase()+"|"+(f.owasp||"")+"|"+(f.severity||"");
+    if(seen[k]) seen[k].n++; else { seen[k]={f,n:1}; out.push(seen[k]); }
+  });
+  return out;
+}
 function findingsList(fs){
   if(!fs.length) return `<div class="empty">${t("run.noFindings")}</div>`;
-  return fs.slice().sort((a,b)=>sevScore(b.severity)-sevScore(a.severity)).map(f=>`
-    <div class="step" data-find="${f.id}" style="cursor:pointer">
+  const uniq=dedupFindings(fs).sort((a,b)=>sevScore(b.f.severity)-sevScore(a.f.severity));
+  return uniq.map(({f,n})=>{
+    const title=n>1?_findClass(f):f.title;
+    return `<div class="step" data-find="${f.id}" style="cursor:pointer">
       <div class="sh"><span><span class="badge sev-${f.severity}">${sevLabel(f.severity)}</span>
-        <b style="margin-left:8px">${esc(f.title)}</b></span>
-        <span class="tag">${f.owasp}</span></div></div>`).join("");
+        <b style="margin-left:8px">${esc(title)}</b>${n>1?`<span class="tag" style="margin-left:6px">×${n}</span>`:""}</span>
+        <span class="tag">${f.owasp}</span></div></div>`;
+  }).join("");
 }
 function attemptsTable(as){
   if(!as.length) return `<div class="empty">${t("run.noAttempts")}</div>`;

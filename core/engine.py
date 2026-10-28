@@ -145,9 +145,23 @@ def _persist(db, run_id, a, probe, ctx):
     for i, s in enumerate(a.steps):
         db.add(Step(attempt_id=row.id, idx=i, role=s.role, prompt=s.prompt,
                     response=s.response, note=s.note, latency_ms=s.latency_ms))
-    # Findings
+
+    # Findings — de-duplicated within the run so the same issue found by several
+    # tools/steps is recorded once (signature = title + owasp + evidence).
+    seen = ctx.setdefault("seen", set())
+
+    def _dupe(title, owasp, evidence):
+        sig = (str(title).strip().lower(), str(owasp).strip().lower(),
+               str(evidence or "").strip().lower()[:200])
+        if sig in seen:
+            return True
+        seen.add(sig)
+        return False
+
     if a.findings:
         for f in a.findings:
+            if _dupe(f.get("title", ""), f.get("owasp", ""), f.get("evidence", "")):
+                continue
             fs = f.get("severity", "info")
             db.add(Finding(
                 run_id=run_id, attempt_id=row.id,
@@ -158,9 +172,11 @@ def _persist(db, run_id, a, probe, ctx):
             ctx["success"] += 1
             ctx["sev"][fs] = ctx["sev"].get(fs, 0) + 1
     elif a.success and probe is not None:
-        db.add(_finding(run_id, row.id, probe, a))
-        ctx["success"] += 1
-        ctx["sev"][probe.severity] = ctx["sev"].get(probe.severity, 0) + 1
+        title = f"{probe.name} — {taxonomy.owasp_label(probe.owasp)}"
+        if not _dupe(title, probe.owasp, a.evidence):
+            db.add(_finding(run_id, row.id, probe, a))
+            ctx["success"] += 1
+            ctx["sev"][probe.severity] = ctx["sev"].get(probe.severity, 0) + 1
 
 
 def _finding(run_id, attempt_id, probe, a) -> Finding:
