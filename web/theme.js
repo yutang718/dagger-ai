@@ -3,7 +3,7 @@
    SVG attack graph stays in sync with the active theme). */
 (function (global) {
   const THEMES = ["midnight", "aurora", "daylight"];
-  const FONTS = ["system", "mono", "humanist"];
+  const FONTS = ["system", "mono", "humanist", "serif", "grotesk", "kai"];
 
   const get = (k, def, list) => {
     const v = localStorage.getItem(k);

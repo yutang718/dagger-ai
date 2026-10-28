@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dagger-AI · Red-Team Console</title>
-<link rel="stylesheet" href="/static/styles.css?v=1.3.2">
+<link rel="stylesheet" href="/static/styles.css?v=1.4.1">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🗡️</text></svg>">
 </head>
 <body>
@@ -24,35 +24,34 @@
 
 <!-- App -->
 <div id="app" class="app hidden">
-  <aside class="sidebar">
+  <header class="topbar">
     <div class="brand"><span class="dagger">🗡️</span> Dagger-AI</div>
     <nav>
-      <a data-view="dashboard" class="active">▚ <span data-i18n="nav.dashboard"></span></a>
-      <a data-view="targets">◎ <span data-i18n="nav.targets"></span></a>
-      <a data-view="campaigns">⚔ <span data-i18n="nav.campaigns"></span></a>
-      <a data-view="runs">⟳ <span data-i18n="nav.runs"></span></a>
-      <a data-view="monitor">◉ <span data-i18n="nav.monitor"></span></a>
-      <a data-view="settings">⚙ <span data-i18n="nav.settings"></span></a>
+      <a data-view="dashboard" class="active"><span data-i18n="nav.dashboard"></span></a>
+      <a data-view="targets"><span data-i18n="nav.targets"></span></a>
+      <a data-view="campaigns"><span data-i18n="nav.campaigns"></span></a>
+      <a data-view="runs"><span data-i18n="nav.runs"></span></a>
+      <a data-view="monitor"><span data-i18n="nav.monitor"></span></a>
+      <a data-view="settings"><span data-i18n="nav.settings"></span></a>
     </nav>
-    <div class="side-foot">
+    <div class="top-controls">
       <div id="attacker-mode" class="pill"></div>
-      <div class="ctl"><label data-i18n="side.language"></label><div class="seg" id="seg-lang"></div></div>
-      <div class="ctl"><label data-i18n="side.theme"></label><div class="seg" id="seg-theme"></div></div>
-      <div class="ctl"><label data-i18n="side.font"></label><div class="seg" id="seg-font"></div></div>
-      <div class="ver">v<span id="ver"></span></div>
+      <div class="seg" id="seg-lang"></div>
+      <select class="topsel" id="sel-theme" aria-label="Theme"></select>
+      <select class="topsel" id="sel-font" aria-label="Font"></select>
+      <span class="ver">v<span id="ver"></span></span>
       <a id="logout" class="logout" data-i18n="side.signout"></a>
     </div>
-  </aside>
-
+  </header>
   <main id="main"></main>
 </div>
 
 <div id="drawer" class="drawer hidden"><div class="drawer-body" id="drawer-body"></div></div>
 <div id="toast" class="toast hidden"></div>
 
-<script src="/static/i18n.js?v=1.3.2"></script>
-<script src="/static/theme.js?v=1.3.2"></script>
-<script src="/static/graph.js?v=1.3.2"></script>
-<script src="/static/app.js?v=1.3.2"></script>
+<script src="/static/i18n.js?v=1.4.1"></script>
+<script src="/static/theme.js?v=1.4.1"></script>
+<script src="/static/graph.js?v=1.4.1"></script>
+<script src="/static/app.js?v=1.4.1"></script>
 </body>
 </html>

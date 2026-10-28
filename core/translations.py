@@ -28,7 +28,8 @@ SEVERITY_ZH = {"critical": "严重", "high": "高危", "medium": "中危", "low"
 # Kill-chain phases for the AI pentest operator.
 PHASE_ZH = {
     "recon": "侦察", "fingerprint": "指纹识别", "discovery": "内容发现",
-    "vuln": "漏洞扫描", "exploit": "利用验证",
+    "vuln": "漏洞扫描", "exploit": "利用验证", "validate": "结果验证",
+    "plan": "规划", "report": "报告",
 }
 
 # Per-probe Chinese name + description (built-in LLM + web probes).

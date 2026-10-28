@@ -347,7 +347,16 @@ def dashboard(_: str = auth.auth_dep, db: Session = Depends(get_session)):
             llm_hits[ow] = n
         elif ow in web_hits:
             web_hits[ow] = n
+    # Aggregate LLM token usage + estimated cost across all runs.
+    usage = {"calls": 0, "total_tokens": 0, "cost_usd": 0.0}
+    for (summ,) in db.execute(select(Run.summary)):
+        u = (summ or {}).get("usage") or {}
+        usage["calls"] += u.get("calls", 0)
+        usage["total_tokens"] += u.get("total_tokens", 0)
+        usage["cost_usd"] += u.get("cost_usd", 0.0)
+    usage["cost_usd"] = round(usage["cost_usd"], 4)
     return {
+        "llm_usage": usage,
         "targets": db.scalar(select(func.count()).select_from(Target)),
         "campaigns": db.scalar(select(func.count()).select_from(Campaign)),
         "runs": db.scalar(select(func.count()).select_from(Run)),

@@ -62,12 +62,14 @@ function buildLoginLang() {
 }
 function buildControls() {
   seg("#seg-lang", [{key:"en",label:"EN",active:I18N.getLang()==="en"},
-                    {key:"zh",label:"中文",active:I18N.getLang()==="zh"}],
+                    {key:"zh",label:"中",active:I18N.getLang()==="zh"}],
       k => { I18N.setLang(k); applyI18n(); buildControls(); refreshAttackerPill(); show(S.view); });
-  seg("#seg-theme", Theme.THEMES.map(x => ({key:x, label:t("theme."+x), active:Theme.getTheme()===x})),
-      k => { Theme.setTheme(k); buildControls(); show(S.view); });
-  seg("#seg-font", Theme.FONTS.map(x => ({key:x, label:t("font."+x), active:Theme.getFont()===x})),
-      k => { Theme.setFont(k); buildControls(); });
+  const selT=$("#sel-theme");
+  selT.innerHTML=Theme.THEMES.map(x=>`<option value="${x}" ${Theme.getTheme()===x?"selected":""}>${t("theme."+x)}</option>`).join("");
+  selT.onchange=()=>{ Theme.setTheme(selT.value); show(S.view); };
+  const selF=$("#sel-font");
+  selF.innerHTML=Theme.FONTS.map(x=>`<option value="${x}" ${Theme.getFont()===x?"selected":""}>${t("font."+x)}</option>`).join("");
+  selF.onchange=()=>{ Theme.setFont(selF.value); };
 }
 function refreshAttackerPill() {
   const on = S.meta && ((S.meta.llm && S.meta.llm.online) || S.meta.attacker_online);
@@ -127,7 +129,10 @@ async function viewDashboard() {
       <div class="panel"><h3>${t("dash.llmTitle")}</h3>${owaspBars(d.owasp_llm_hits)}</div>
       <div class="panel"><h3>${t("dash.webTitle")}</h3>${owaspBars(d.owasp_web_hits)}</div>
     </div>
-    <div class="panel"><h3>${t("dash.toolRunner")}</h3>${toolStatus(tools)}</div>
+    <div class="grid2">
+      <div class="panel"><h3>${t("dash.toolRunner")}</h3>${toolStatus(tools)}</div>
+      <div class="panel"><h3>${t("usage.title")}</h3>${usagePanel(d.llm_usage)}</div>
+    </div>
     <div class="panel"><h3>${t("dash.recent")}</h3>${runsTable(d.recent_runs)}</div>`;
   bindRunRows();
 }
@@ -151,6 +156,21 @@ function domainSplit(d){
     <p class="no" style="font-size:12px;margin-top:14px">${t("dash.domainNote")}</p></div>`;
 }
 const kpi = (n,l) => `<div class="card kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`;
+
+function usagePanel(u){
+  u=u||{};
+  if(!u.total_tokens) return `<div class="no" style="font-size:13px;padding:6px 0">${t("usage.none")}</div>`;
+  return `<div class="usage" style="padding:6px 0">
+    <span><b>${(u.total_tokens||0).toLocaleString()}</b> ${t("usage.tokens")}</span>
+    <span class="ucost">~$${(u.cost_usd||0).toFixed(4)}</span>
+    <span><b>${u.calls||0}</b> ${t("usage.calls")}</span></div>
+    <p class="no" style="font-size:11px;margin-top:8px">${t("usage.est")}</p>`;
+}
+function usageInline(u){
+  u=u||{}; if(!u.total_tokens) return "";
+  return ` · <span class="usage" style="display:inline-flex"><b>${(u.total_tokens||0).toLocaleString()}</b> ${t("usage.tokens")}
+    <span class="ucost">~$${(u.cost_usd||0).toFixed(4)}</span></span>`;
+}
 
 function donut(sev) {
   const order=["critical","high","medium","low","info"];
@@ -380,26 +400,68 @@ async function openRun(id){
 function renderRun(d){
   const r=d.run, s=r.summary||{};
   const live = ["running","queued"].includes(r.status);
+  const plan=d.attempts.find(a=>a.phase==="plan");
+  const report=d.attempts.find(a=>a.phase==="report");
+  const validation=d.attempts.find(a=>a.phase==="validate");
+  const steps=d.attempts.filter(a=>!["plan","report","validate"].includes(a.phase));
   main().innerHTML = `
     <div class="spread"><div><h1>${t("run.title")} #${r.id} <span class="status ${r.status}">
       ${live?'<span class="spin"></span> ':''}${statusLabel(r.status)}</span></h1>
-      <p class="lead">${t("run.summary",{a:s.attempts||0,s:s.successes||0})}</p></div>
+      <p class="lead">${t("run.summary",{a:s.attempts||0,s:s.successes||0})}${usageInline(s.usage)}</p></div>
       <div class="row">${live?`<button class="danger" id="stop">${t("common.stop")}</button>`:""}
       <button class="ghost" id="back-runs">${t("common.back")}</button></div></div>
     ${r.error?`<div class="warn">${t("run.error")}: ${esc(r.error)}</div>`:""}
+    ${plan?playbookPanel(t("run.playbook"),plan):""}
     <div class="panel"><h3>${t("run.graphTitle")}</h3>
       <div id="graph"></div>
       <p class="no" style="font-size:12px;margin-top:8px">${t("run.graphNote")}</p></div>
-    <div class="panel"><h3>${t("run.findingsTitle",{n:d.findings.length})}</h3>${findingsList(d.findings)}</div>
-    <div class="panel"><h3>${t("run.attemptsTitle")}</h3>${attemptsTable(d.attempts)}</div>`;
+    <div class="panel"><h3>${t("run.findingsTitle",{n:d.findings.length})}</h3>
+      <div class="scrollbox">${findingsList(d.findings)}</div></div>
+    <div class="panel"><h3>${t("run.phasesTitle")}</h3>${phaseGroups(steps)}</div>
+    ${validation?playbookPanel(t("run.validation"),validation):""}
+    ${report?playbookPanel(t("run.execSummary"),report):""}`;
   $("#back-runs").onclick=()=>show("runs");
   if(live) $("#stop").onclick=async()=>{ await api(`/runs/${r.id}/stop`,{method:"POST"}); toast(t("common.stop")+"…"); };
-  AttackGraph.render($("#graph"), {attempts:d.attempts, targetLabel:"Target", targetName:"",
+  AttackGraph.render($("#graph"), {attempts:steps, targetLabel:"Target", targetName:"",
     resistedLabel:t("result.clean")}, openAttempt);
   main().querySelectorAll("[data-att]").forEach(tr=>tr.onclick=()=>{
     openAttempt(d.attempts.find(a=>a.id==tr.dataset.att)); });
   main().querySelectorAll("[data-find]").forEach(c=>c.onclick=()=>{
     openFinding(d.findings.find(x=>x.id==c.dataset.find)); });
+}
+function playbookPanel(title, a){
+  const s=(a.steps&&a.steps[0])||{};
+  return `<div class="panel"><h3>${esc(title)}</h3>
+    ${s.note?`<div class="pb-note">${esc(s.note)}</div>`:""}
+    <div class="playbook">${esc(s.response||"")}</div></div>`;
+}
+const PHASE_ORDER=["recon","fingerprint","discovery","vuln","exploit"];
+function phaseGroups(as){
+  if(!as.length) return `<div class="empty">${t("run.noAttempts")}</div>`;
+  const groups={};
+  as.forEach(a=>{ (groups[a.phase||"_"]=groups[a.phase||"_"]||[]).push(a); });
+  const order=[...PHASE_ORDER,"_"].filter(p=>groups[p]);
+  Object.keys(groups).forEach(p=>{ if(!order.includes(p)) order.push(p); });
+  return order.map(p=>{
+    const items=groups[p]; if(!items) return "";
+    const label = p==="_" ? t("run.attemptsTitle") : phaseLabel(p);
+    const hits=items.filter(a=>a.success).length;
+    return `<div class="phase">
+      <div class="phase-head"><span class="dot"></span>${esc(label)}
+        <span class="ln"></span><span>${items.length}${hits?` · ${hits}✓`:""}</span></div>
+      ${items.map(atkRow).join("")}</div>`;
+  }).join("");
+}
+function atkRow(a){
+  const s0=(a.steps&&a.steps[0])||{};
+  const sub=(s0.prompt||a.rationale||"").slice(0,120);
+  return `<div class="atk ${a.success?"ok":""}" data-att="${a.id}">
+    <span class="ti"><div class="tn">${esc(a.technique)}
+      ${a.success?`<span class="badge sev-${a.severity}">${t("result.finding")}</span>`
+                 :`<span class="no" style="font-size:11px">${t("result.clean")}</span>`}
+      ${a.owasp?`<span class="tag">${a.owasp}</span>`:""}${a.atlas?`<span class="tag">${a.atlas}</span>`:""}</div>
+      ${sub?`<div class="tc">${esc(sub)}</div>`:""}</span>
+    <span class="chev">›</span></div>`;
 }
 function findingsList(fs){
   if(!fs.length) return `<div class="empty">${t("run.noFindings")}</div>`;
@@ -459,7 +521,7 @@ function renderMonitor(d, cmap, tmap){
             :`<span class="status ${r.status}">${statusLabel(r.status)}</span>`}
       <span class="tag">#${r.id}</span>
       <span class="no" style="font-size:12px">${t("monitor.target")}: <b>${esc(tgt.name||"—")}</b> ·
-        ${t("monitor.strategy")}: <b>${esc(strategyLabel(camp.orchestrator||"single_turn"))}</b></span>
+        ${t("monitor.strategy")}: <b>${esc(strategyLabel(camp.orchestrator||"single_turn"))}</b>${usageInline((r.summary||{}).usage)}</span>
       <a class="no" id="mon-open" style="margin-left:auto;font-size:12px">${t("monitor.viewFull")}</a>
     </div>
     <p class="lead">${live?t("monitor.lead"):t("monitor.idle")}</p>

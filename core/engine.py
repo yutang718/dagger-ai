@@ -44,6 +44,9 @@ def _execute(run_id: int) -> None:
         run.status = "running"
         db.commit()
 
+        # Per-engagement token meter (visible to every LLM call in this thread).
+        from .llm_client import new_meter
+        meter = new_meter()
         attacker = AttackerAgent()
         tclient = TargetClient(target)
         http = httpx.Client(timeout=config.REQUEST_TIMEOUT, follow_redirects=True,
@@ -92,6 +95,7 @@ def _execute(run_id: int) -> None:
             "successes": ctx["success"],
             "severity": ctx["sev"],
             "worst": taxonomy.worst([s for s, n in ctx["sev"].items() if n]),
+            "usage": meter.as_dict(),
         }
         if run.status != "stopped":
             run.status = "done"

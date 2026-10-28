@@ -49,8 +49,17 @@ def _url_and_host(endpoint: str) -> tuple[str, str]:
 
 
 def run_engagement(endpoint, selected, allow_internal, max_steps, client: LLMClient | None = None):
+    """Dispatch: an LLM-driven closed loop when an attacker LLM is online
+    (plan → choose next action from results → execute → validate → re-plan →
+    summarise), else the deterministic default playbook."""
     client = client or LLMClient.attacker()
     url, host = _url_and_host(endpoint)
+    if client.online:
+        return _agentic_engagement(client, url, host, selected, allow_internal, max_steps)
+    return _playbook_engagement(client, url, host, selected, allow_internal, max_steps)
+
+
+def _playbook_engagement(client, url, host, selected, allow_internal, max_steps):
     attempts: list[AttemptRec] = []
 
     # ---- AI plan (or deterministic note) ----
@@ -179,3 +188,102 @@ def _summary(client, host, attempts):
     line = ", ".join(f"{bysev[s]} {s}" for s in order if bysev.get(s))
     top = "; ".join(f.get("title", "") for f in allf if f.get("severity") in ("critical", "high"))[:400]
     return f"Engagement against {host} confirmed {len(allf)} finding(s): {line}. Priority issues: {top or '—'}."
+
+
+# ============================================================ agentic loop
+_NEXT_SYS = (
+    "You are an autonomous penetration-test operator running an AUTHORIZED engagement. "
+    "Given the target, the modules still available, and the results so far, choose the single "
+    "most valuable NEXT module to run — or stop when further scanning adds little value. "
+    "Respect the phase order (recon → fingerprint → discovery → vuln → exploit). "
+    'Reply ONLY with JSON: {"module": "<module_id>|stop", "reason": "<one short sentence>"}.')
+_VAL_SYS = (
+    "You are a senior penetration tester VALIDATING the findings of an AUTHORIZED engagement. "
+    "For the findings given, state which are likely true positives vs. need manual verification, "
+    "note any likely false positives, and give the top remediation priorities. <=120 words, no preamble.")
+
+
+def _next_action(client, url, host, remaining, ran) -> dict:
+    state = "\n".join(f"- {m}: {n} finding(s)" for m, n in ran) or "(nothing run yet)"
+    rem = ", ".join(sorted(remaining))
+    data = client.complete_json(
+        _NEXT_SYS,
+        f"Target: {url} (host {host})\nModules available: {rem}\n"
+        f"Phase order: {' -> '.join(PHASE_ORDER)}\nResults so far:\n{state}\n"
+        "Choose the next module id to run now, or \"stop\".")
+    return data or {}
+
+
+def _validate(client, host, attempts) -> str:
+    allf = [f for a in attempts for f in a.findings]
+    if not allf:
+        return ""
+    brief = "\n".join(
+        f"- [{f.get('severity')}] {f.get('title')} ({f.get('owasp','')}) "
+        f"evidence: {str(f.get('evidence',''))[:80]}" for f in allf[:40])
+    return client.complete(_VAL_SYS, f"Host: {host}\nFindings:\n{brief}").strip()
+
+
+def _run_module(mod, url, host, allow_internal, reason):
+    """Run one module, tagging each resulting attempt with the LLM's reasoning so
+    the spectator view shows WHY it was chosen."""
+    phase, tool = MODULES[mod]
+    out = []
+    if tool == "__builtin__":
+        out = _web_probe_attempts(url)
+        hits = sum(1 for a in out if a.success)
+    else:
+        tgt = host if tool == "nmap" else url
+        res = tools_client.run(tool, tgt, allow_internal=allow_internal)
+        a = _attempt_from_tool(mod, phase, res)
+        if a.steps and reason:
+            a.steps[0].note = f"AI chose this — {reason} · " + a.steps[0].note
+        if reason:
+            a.rationale = f"Rationale: {reason} | " + (a.rationale or "")
+        out = [a]
+        hits = len(res.get("findings", []) or [])
+    return out, hits
+
+
+def _agentic_engagement(client, url, host, selected, allow_internal, max_steps):
+    attempts: list[AttemptRec] = []
+    chosen = [m for m in MODULES if m in selected] or list(MODULES)
+
+    # 1) PLAN — the LLM writes the strategy.
+    plan_txt = _plan(client, url, host, chosen)
+    attempts.append(AttemptRec("engagement-plan", f"Plan an authorized assessment of {host}",
+                               [StepRec("plan", f"target={url}  scope-host={host}", plan_txt,
+                                        "AI operator plan")], False, 0.0, phase="plan"))
+
+    # 2) CLOSED LOOP — the LLM picks the next action from results, until done/budget.
+    remaining = set(chosen)
+    ran: list[tuple[str, int]] = []
+    budget = max_steps
+    while remaining and budget > 0:
+        decision = _next_action(client, url, host, remaining, ran)
+        mod = (decision.get("module") or "").strip()
+        reason = (decision.get("reason") or "").strip()
+        if mod == "stop":
+            break
+        if mod not in remaining:   # invalid/empty choice → fall back to phase order
+            mod = sorted(remaining, key=lambda m: PHASE_ORDER.index(MODULES[m][0]))[0]
+            reason = reason or "next phase in order"
+        remaining.discard(mod)
+        budget -= 1
+        recs, hits = _run_module(mod, url, host, allow_internal, reason)
+        attempts.extend(recs)
+        ran.append((mod, hits))
+
+    # 3) VALIDATE — the LLM reviews the findings (true positives / FPs / priorities).
+    val = _validate(client, host, attempts)
+    if val:
+        attempts.append(AttemptRec("validation", f"Validate findings for {host}",
+                                   [StepRec("report", "LLM validation of findings", val,
+                                            "AI operator validation")], False, 0.0, phase="validate"))
+
+    # 4) SUMMARY — executive summary.
+    summary = _summary(client, host, attempts)
+    attempts.append(AttemptRec("engagement-summary", f"Summarise findings for {host}",
+                               [StepRec("report", "executive summary", summary,
+                                        "AI operator summary")], False, 0.0, phase="report"))
+    return attempts
