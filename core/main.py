@@ -319,7 +319,8 @@ def delete_campaign(cid: int, _: str = auth.auth_dep, db: Session = Depends(get_
 
 
 @app.post("/api/campaigns/{cid}/run")
-def run_campaign(cid: int, _: str = auth.auth_dep, db: Session = Depends(get_session)):
+def run_campaign(cid: int, lang: str = "en", _: str = auth.auth_dep,
+                 db: Session = Depends(get_session)):
     c = db.get(Campaign, cid)
     if not c:
         raise HTTPException(404, "campaign not found")
@@ -328,7 +329,7 @@ def run_campaign(cid: int, _: str = auth.auth_dep, db: Session = Depends(get_ses
         raise HTTPException(403, "target is not marked authorized — add an authorization note first")
     run = Run(campaign_id=cid, status="queued")
     db.add(run); db.commit()
-    start_run(run.id)
+    start_run(run.id, "zh" if lang == "zh" else "en")
     return {"run_id": run.id, "status": "queued"}
 
 

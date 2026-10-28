@@ -15,6 +15,7 @@ and runs inside the isolated tools container.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import time
@@ -208,11 +209,126 @@ def _extract(text, marker, n):
     return text[i:i + n].strip() if i >= 0 else ""
 
 
+def _host_only(target):
+    return target.split("://")[-1].split("/")[0]
+
+
+# --------------------------------------------------------- subfinder (recon)
+def subfinder(target, options=None, timeout=180):
+    if not _which("subfinder"):
+        return _result("subfinder", "subfinder", available=False)
+    host = _host_only(target).split(":")[0]
+    cmd = ["subfinder", "-d", host, "-silent", "-all"]
+    rc, out, ms, err = _run(cmd, timeout)
+    subs = [l.strip() for l in (out or "").splitlines() if l.strip() and "." in l]
+    return _result("subfinder", cmd, rc, out, ms, [], subs[:200], error=err)
+
+
+# ------------------------------------------------------------ katana (discovery)
+def katana(target, options=None, timeout=180):
+    if not _which("katana"):
+        return _result("katana", "katana", available=False)
+    cmd = ["katana", "-u", target, "-silent", "-d", "2", "-jc", "-nc"]
+    rc, out, ms, err = _run(cmd, timeout)
+    urls = [l.strip() for l in (out or "").splitlines() if l.strip().startswith("http")]
+    return _result("katana", cmd, rc, out, ms, [], urls[:300], error=err)
+
+
+# ----------------------------------------------------------- wafw00f (fingerprint)
+def wafw00f(target, options=None, timeout=90):
+    if not _which("wafw00f"):
+        return _result("wafw00f", "wafw00f", available=False)
+    cmd = ["wafw00f", target, "-a"]
+    rc, out, ms, err = _run(cmd, timeout)
+    obs = ["WAF: " + m.group(1).strip() for m in re.finditer(r"is behind (.+?)(?: WAF| \()", out or "")]
+    if not obs and re.search(r"(No WAF|seems to be behind no)", out or "", re.I):
+        obs = ["No WAF detected"]
+    return _result("wafw00f", cmd, rc, out, ms, [], obs, error=err)
+
+
+# --------------------------------------------------------- sslscan (TLS/SSL)
+def sslscan(target, options=None, timeout=120):
+    if not _which("sslscan"):
+        return _result("sslscan", "sslscan", available=False)
+    host = _host_only(target)
+    if ":" not in host:
+        host += ":443"
+    cmd = ["sslscan", "--no-colour", host]
+    rc, out, ms, err = _run(cmd, timeout)
+    findings, obs = [], []
+    for proto, sev in (("SSLv2", "high"), ("SSLv3", "high"), ("TLSv1.0", "medium"), ("TLSv1.1", "medium")):
+        if re.search(rf"{re.escape(proto)}\s+enabled", out or "") or \
+           re.search(rf"Accepted.*{re.escape(proto)}", out or ""):
+            obs.append(f"{proto} enabled")
+            findings.append({"title": f"Weak TLS protocol enabled: {proto}", "severity": sev,
+                             "owasp": "A02", "mitre": "T1040", "evidence": proto,
+                             "description": f"{proto} is deprecated and insecure.",
+                             "remediation": "Disable legacy SSL/TLS; require TLS 1.2+."})
+    return _result("sslscan", cmd, rc, out, ms, findings, obs, error=err)
+
+
+# --------------------------------------------------------- nikto (vuln)
+def nikto(target, options=None, timeout=300):
+    if not _which("nikto"):
+        return _result("nikto", "nikto", available=False)
+    cmd = ["nikto", "-h", target, "-nointeractive", "-maxtime", "180s", "-ask", "no"]
+    rc, out, ms, err = _run(cmd, timeout)
+    findings, obs = [], []
+    for line in (out or "").splitlines():
+        line = line.strip()
+        if line.startswith("+ ") and len(line) > 6:
+            item = line[2:].strip()
+            obs.append(item[:160])
+            low = item.lower()
+            if any(k in low for k in ("osvdb", "vulnerable", "injection", "xss", "disclosure",
+                                      "default", "backup", "admin", "outdated", "deprecated", ".git", "cve")):
+                findings.append({"title": "Nikto: " + item[:90], "severity": "medium", "owasp": "A05",
+                                 "mitre": "T1595", "evidence": item[:200],
+                                 "description": "Nikto flagged a potential web-server issue.",
+                                 "remediation": "Review and remediate the flagged item."})
+    return _result("nikto", cmd, rc, out, ms, findings[:30], obs[:60], error=err)
+
+
+# --------------------------------------------------------- dalfox (XSS exploit)
+def dalfox(target, options=None, timeout=240):
+    if not _which("dalfox"):
+        return _result("dalfox", "dalfox", available=False)
+    cmd = ["dalfox", "url", target, "--no-color", "--silence", "--no-spinner"]
+    rc, out, ms, err = _run(cmd, timeout)
+    findings = []
+    for line in (out or "").splitlines():
+        if "[POC]" in line or "[VULN]" in line:
+            findings.append({"title": "Cross-site scripting (dalfox)", "severity": "high",
+                             "owasp": "A03", "mitre": "T1059.007", "evidence": line.strip()[:300],
+                             "description": "dalfox produced a working XSS proof of concept.",
+                             "remediation": "Context-aware output encoding; strict CSP."})
+    return _result("dalfox", cmd, rc, out, ms, findings[:20], error=err)
+
+
+# ------------------------------------------------- commix (command injection exploit)
+def commix(target, options=None, timeout=300):
+    if not _which("commix"):
+        return _result("commix", "commix", available=False)
+    cmd = ["commix", "--url", target, "--batch", "--skip-waf"]
+    rc, out, ms, err = _run(cmd, timeout)
+    low = (out or "").lower()
+    findings = []
+    if "is vulnerable" in low or ("injection point" in low and "command" in low):
+        findings.append({"title": "OS command injection (commix)", "severity": "critical",
+                         "owasp": "A03", "mitre": "T1059",
+                         "evidence": _extract(out, "injection", 300) or "commix flagged a command-injection point",
+                         "description": "commix confirmed an OS command injection point.",
+                         "remediation": "Avoid shell calls with user input; use safe APIs; allow-list input."})
+    return _result("commix", cmd, rc, out, ms, findings, error=err)
+
+
 REGISTRY = {
     "nmap": nmap, "httpx": httpx, "nuclei": nuclei, "ffuf": ffuf,
     "whatweb": whatweb, "sqlmap": sqlmap,
+    "subfinder": subfinder, "katana": katana, "wafw00f": wafw00f, "sslscan": sslscan,
+    "nikto": nikto, "dalfox": dalfox, "commix": commix,
 }
 
 
 def available_tools():
-    return {name: _which(name if name != "httpx" else "httpx") for name in REGISTRY}
+    return {name: _which(name) for name in REGISTRY}

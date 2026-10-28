@@ -52,10 +52,17 @@ PROBE_ZH = {
 # Pentest module Chinese names (keyed by module id from operator.MODULES).
 MODULE_ZH = {
     "recon_nmap": "Nmap 端口与服务侦察",
+    "recon_subfinder": "Subfinder 子域名枚举",
     "probe_httpx": "httpx Web 探测 / 技术识别",
     "fingerprint_whatweb": "WhatWeb 指纹识别",
+    "waf_wafw00f": "WAFW00F WAF 检测",
+    "tls_sslscan": "sslscan TLS/SSL 分析",
     "discovery_ffuf": "ffuf 内容发现",
+    "crawl_katana": "Katana 爬取 / URL 发现",
     "vuln_nuclei": "Nuclei 漏洞扫描",
+    "vuln_nikto": "Nikto Web 服务器扫描",
     "sqli_sqlmap": "sqlmap SQL 注入验证",
+    "xss_dalfox": "dalfox XSS 验证",
+    "cmdi_commix": "commix 命令注入验证",
     "web_probes": "内置 Web 探针（OWASP）",
 }

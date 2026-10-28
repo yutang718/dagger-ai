@@ -333,7 +333,7 @@ async function viewCampaigns() {
   main().querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{
     await api("/campaigns/"+b.dataset.del,{method:"DELETE"}); viewCampaigns(); });
   main().querySelectorAll("[data-run]").forEach(b=>b.onclick=async()=>{
-    try{ const r=await api(`/campaigns/${b.dataset.run}/run`,{method:"POST"});
+    try{ const r=await api(`/campaigns/${b.dataset.run}/run?lang=${I18N.getLang()}`,{method:"POST"});
       toast(t("toast.runStarted")); openRun(r.run_id); }
     catch(e){ toast("⚠ "+e.message); }});
 }

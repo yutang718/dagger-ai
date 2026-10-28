@@ -13,13 +13,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # wheel for it, and the from-source build fails to link in this image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         nmap sqlmap whatweb ffuf seclists dnsutils \
+        nikto sslscan wafw00f commix \
         golang-go git ca-certificates curl \
         python3 python3-fastapi python3-uvicorn python3-pydantic \
     && rm -rf /var/lib/apt/lists/*
 
-# ProjectDiscovery httpx + nuclei (reliable, latest) via go install.
+# ProjectDiscovery httpx + nuclei + subfinder + katana, and dalfox, via go install.
 RUN go install github.com/projectdiscovery/httpx/cmd/httpx@latest \
     && go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
+    && go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest \
+    && go install github.com/projectdiscovery/katana/cmd/katana@latest \
+    && go install github.com/hahwul/dalfox/v2@latest \
     && /root/go/bin/nuclei -update-templates || true
 
 WORKDIR /srv

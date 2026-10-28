@@ -23,8 +23,8 @@ from .targets import TargetClient
 _RUNNING: set[int] = set()
 
 
-def start_run(run_id: int) -> None:
-    t = threading.Thread(target=_execute, args=(run_id,), daemon=True)
+def start_run(run_id: int, lang: str = "en") -> None:
+    t = threading.Thread(target=_execute, args=(run_id, lang), daemon=True)
     t.start()
 
 
@@ -32,7 +32,7 @@ def stop_run(run_id: int) -> None:
     _RUNNING.discard(run_id)
 
 
-def _execute(run_id: int) -> None:
+def _execute(run_id: int, lang: str = "en") -> None:
     _RUNNING.add(run_id)
     db = SessionLocal()
     try:
@@ -66,7 +66,7 @@ def _execute(run_id: int) -> None:
                 bool(target.allow_internal),
                 min(campaign.max_turns or config.MAX_TOOL_STEPS, config.MAX_TOOL_STEPS),
                 attacker.client, on_attempt=_emit_host,
-                cancelled=lambda: run_id not in _RUNNING)
+                cancelled=lambda: run_id not in _RUNNING, lang=lang)
             if run_id not in _RUNNING:
                 run.status = "stopped"
         else:
