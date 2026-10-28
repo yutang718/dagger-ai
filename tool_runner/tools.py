@@ -343,13 +343,163 @@ def commix(target, options=None, timeout=300):
     return _result("commix", cmd, rc, out, ms, findings, error=err)
 
 
+# --------------------------------------------------------- gau (URL discovery)
+def gau(target, options=None, timeout=180):
+    if not _which("gau"):
+        return _result("gau", "gau", available=False)
+    host = _host_only(target).split(":")[0]
+    cmd = ["gau", "--subs", "--threads", "5", host]
+    rc, out, ms, err = _run(cmd, timeout)
+    urls = [l.strip() for l in (out or "").splitlines() if l.strip().startswith("http")]
+    return _result("gau", cmd, rc, out, ms, [], urls[:400], error=err)
+
+
+# --------------------------------------------------------- arjun (param discovery)
+def arjun(target, options=None, timeout=180):
+    if not _which("arjun"):
+        return _result("arjun", "arjun", available=False)
+    cmd = ["arjun", "-u", target, "--stable"]
+    rc, out, ms, err = _run(cmd, timeout)
+    obs, seen = [], set()
+    for line in (out or "").splitlines():
+        m = re.search(r"parameters? found:\s*(.+)", line, re.I)
+        if m:
+            for p in re.split(r"[,\s]+", m.group(1).strip()):
+                if p and p not in seen:
+                    seen.add(p); obs.append("param: " + p)
+    return _result("arjun", cmd, rc, out, ms, [], obs[:100], error=err)
+
+
+# --------------------------------------------------------- testssl.sh (TLS vulns)
+def testssl(target, options=None, timeout=300):
+    bin_ = "testssl.sh" if _which("testssl.sh") else ("testssl" if _which("testssl") else None)
+    if not bin_:
+        return _result("testssl", "testssl.sh", available=False)
+    host = _host_only(target)
+    if ":" not in host:
+        host += ":443"
+    cmd = [bin_, "--color", "0", "--fast", "--quiet", "-U", host]
+    rc, out, ms, err = _run(cmd, timeout)
+    findings, obs = [], []
+    VULNS = [("Heartbleed", "critical"), ("ROBOT", "high"), ("Ticketbleed", "high"), ("CCS", "high"),
+             ("CRIME", "medium"), ("POODLE", "high"), ("BEAST", "low"), ("LUCKY13", "medium"),
+             ("SWEET32", "medium"), ("FREAK", "high"), ("DROWN", "high"), ("LOGJAM", "medium")]
+    for vuln, sev in VULNS:
+        if re.search(rf"{vuln}.*(VULNERABLE|potentially vulnerable)", out or "", re.I):
+            obs.append(f"{vuln}: vulnerable")
+            findings.append({"title": f"TLS vulnerability: {vuln}", "severity": sev, "owasp": "A02",
+                             "mitre": "T1040", "evidence": vuln,
+                             "description": f"testssl.sh flagged the TLS stack vulnerable to {vuln}.",
+                             "remediation": "Patch the TLS library; disable weak protocols/ciphers; use TLS 1.2+."})
+    return _result("testssl", cmd, rc, out, ms, findings, obs, error=err)
+
+
+# --------------------------------------------------------- wpscan (WordPress)
+def wpscan(target, options=None, timeout=360):
+    if not _which("wpscan"):
+        return _result("wpscan", "wpscan", available=False)
+    cmd = ["wpscan", "--url", target, "--no-banner", "--format", "json",
+           "--random-user-agent", "--disable-tls-checks"]
+    rc, out, ms, err = _run(cmd, timeout)
+    findings = []
+    try:
+        start = (out or "").find("{")
+        data = json.loads(out[start:out.rindex("}") + 1]) if start >= 0 else {}
+
+        def _addv(vulns, where):
+            for vv in (vulns or []):
+                findings.append({"title": f"WordPress {where}: {vv.get('title', 'vulnerability')}",
+                                 "severity": "high", "owasp": "A06", "mitre": "T1595.002",
+                                 "evidence": str(vv.get('title', ''))[:200],
+                                 "description": "wpscan matched a known WordPress vulnerability.",
+                                 "remediation": "Update WordPress core/plugins/themes to patched versions."})
+        ver = data.get("version") or {}
+        if isinstance(ver, dict):
+            _addv(ver.get("vulnerabilities"), "core")
+        for name, pl in (data.get("plugins", {}) or {}).items():
+            if isinstance(pl, dict):
+                _addv(pl.get("vulnerabilities"), f"plugin {name}")
+        for name, th in (data.get("themes", {}) or {}).items():
+            if isinstance(th, dict):
+                _addv(th.get("vulnerabilities"), f"theme {name}")
+    except (ValueError, KeyError):
+        pass
+    return _result("wpscan", cmd, rc, out, ms, findings[:30], error=err)
+
+
+# ----------------------------------- gitsecrets (exposed .git → dump → secrets)
+def gitsecrets(target, options=None, timeout=300):
+    """If a .git directory is exposed, dump it (git-dumper) and scan the recovered
+    repository for leaked secrets (trufflehog, else gitleaks)."""
+    import tempfile, shutil as _sh, urllib.request
+    base = target if "://" in target else "http://" + target
+    giturl = base.rstrip("/") + "/.git/"
+    cmd = ["git-dumper", giturl, "<tmp>", "+ trufflehog"]
+    try:
+        r = urllib.request.urlopen(urllib.request.Request(giturl + "config"), timeout=15)
+        cfg = r.read(200)
+        if b"[core]" not in cfg and b"repositoryformatversion" not in cfg:
+            return _result("gitsecrets", cmd, 0, "(.git not exposed)", 0, [], ["/.git not accessible"])
+    except Exception as e:
+        return _result("gitsecrets", cmd, None, "", 0, [], [f"/.git not accessible: {e}"])
+    if not _which("git-dumper"):
+        return _result("gitsecrets", cmd, None, "", 0,
+                       [{"title": "Exposed .git directory", "severity": "high", "owasp": "A05",
+                         "mitre": "T1213", "evidence": giturl,
+                         "description": "A .git directory is web-accessible; source and history can be recovered.",
+                         "remediation": "Block access to .git; don't deploy VCS metadata."}],
+                       ["git-dumper not installed — reported exposure only"])
+    d = tempfile.mkdtemp(prefix="gitdump_")
+    out = ""
+    findings = [{"title": "Exposed .git directory", "severity": "high", "owasp": "A05",
+                 "mitre": "T1213", "evidence": giturl,
+                 "description": "A .git directory is web-accessible; source and history can be recovered.",
+                 "remediation": "Block access to .git; don't deploy VCS metadata."}]
+    try:
+        _run(["git-dumper", giturl, d], min(timeout - 60, 180))
+        if _which("trufflehog"):
+            rc, out, ms, err = _run(["trufflehog", "filesystem", d, "--json", "--no-update"], 120)
+            for line in (out or "").splitlines():
+                try:
+                    j = json.loads(line)
+                    det = j.get("DetectorName") or j.get("DetectorType")
+                    raw = str(j.get("Raw") or "")[:40]
+                    if det:
+                        findings.append({"title": f"Secret leaked in repo: {det}", "severity": "critical",
+                                         "owasp": "A02", "mitre": "T1552",
+                                         "evidence": f"{det}: {raw}…",
+                                         "description": "A credential/secret was recovered from the exposed git repository.",
+                                         "remediation": "Rotate the secret, purge it from git history, and block .git exposure."})
+                except (ValueError, KeyError):
+                    continue
+        elif _which("gitleaks"):
+            rc, out, ms, err = _run(["gitleaks", "detect", "--source", d, "--no-banner",
+                                     "--report-format", "json", "--report-path", "/dev/stdout"], 120)
+            try:
+                for item in json.loads(out or "[]"):
+                    findings.append({"title": f"Secret leaked in repo: {item.get('RuleID', 'secret')}",
+                                     "severity": "critical", "owasp": "A02", "mitre": "T1552",
+                                     "evidence": str(item.get('Secret', ''))[:40] + "…",
+                                     "description": "A credential/secret was recovered from the exposed git repository.",
+                                     "remediation": "Rotate the secret, purge it from git history, and block .git exposure."})
+            except ValueError:
+                pass
+        return _result("gitsecrets", cmd, 0, out[:4000], 0, findings[:40], [f"dumped repo + scanned ({d})"])
+    finally:
+        _sh.rmtree(d, ignore_errors=True)
+
+
+# tools whose binary name differs from the registry key
+BINARIES = {"testssl": "testssl.sh", "gitsecrets": "git-dumper"}
+
 REGISTRY = {
     "nmap": nmap, "httpx": httpx, "nuclei": nuclei, "ffuf": ffuf,
     "whatweb": whatweb, "sqlmap": sqlmap,
     "subfinder": subfinder, "katana": katana, "wafw00f": wafw00f, "sslscan": sslscan,
     "nikto": nikto, "dalfox": dalfox, "commix": commix,
+    "gau": gau, "arjun": arjun, "testssl": testssl, "wpscan": wpscan, "gitsecrets": gitsecrets,
 }
 
 
 def available_tools():
-    return {name: _which(name) for name in REGISTRY}
+    return {name: _which(BINARIES.get(name, name)) for name in REGISTRY}

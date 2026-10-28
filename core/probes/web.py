@@ -279,3 +279,35 @@ class AuthFailures(WebProbe):
                      if success else "Default credentials rejected.")
         return [AttemptRec("default-credentials", self.objective, steps,
                            success, 0.85 if success else 0.0, evidence, rationale)]
+
+
+@register
+class SSTI(WebProbe):
+    id = "ssti"
+    name = "Server-Side Template Injection"
+    owasp = "A03"
+    mitre = "T1059"
+    severity = "critical"
+    objective = "Confirm server-side template injection by evaluating an arithmetic expression."
+    description = "Tests whether user input is evaluated by a server-side template engine (→ RCE)."
+    remediation = ("Never render user input as a template; use a sandboxed engine with autoescaping; "
+                   "validate and escape input.")
+
+    def execute(self, base_url, http):
+        import random
+        a, b = random.randint(100, 999), random.randint(100, 999)
+        expected = str(a * b)
+        payloads = ["{{%d*%d}}" % (a, b), "${%d*%d}" % (a, b), "#{%d*%d}" % (a, b),
+                    "{%d*%d}" % (a, b), "<%%= %d*%d %%>" % (a, b)]
+        last = None
+        for tpl in payloads:
+            url = urljoin(base_url, "/search?q=" + quote(tpl))
+            s, r = _req(http, "GET", url, "Inject a template expression (%s)" % tpl)
+            last = s
+            text = r.text if r is not None else ""
+            if expected in text and tpl not in text:
+                return [AttemptRec("template-eval", self.objective, [s], True, 1.0, expected,
+                                   "Template expression evaluated server-side (%s -> %s) — SSTI, likely RCE."
+                                   % (tpl, expected))]
+        return [AttemptRec("template-eval", self.objective, [last] if last else [], False, 0.0, "",
+                           "No server-side template evaluation observed.")]

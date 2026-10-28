@@ -30,11 +30,16 @@ MODULES = {
     "tls_sslscan":         ("fingerprint", "sslscan"),
     "discovery_ffuf":      ("discovery",   "ffuf"),
     "crawl_katana":        ("discovery",   "katana"),
+    "urls_gau":            ("discovery",   "gau"),
+    "params_arjun":        ("discovery",   "arjun"),
     "vuln_nuclei":         ("vuln",        "nuclei"),
     "vuln_nikto":          ("vuln",        "nikto"),
+    "tls_testssl":         ("vuln",        "testssl"),
+    "cms_wpscan":          ("vuln",        "wpscan"),
     "sqli_sqlmap":         ("exploit",     "sqlmap"),
     "xss_dalfox":          ("exploit",     "dalfox"),
     "cmdi_commix":         ("exploit",     "commix"),
+    "secrets_gitsecrets":  ("exploit",     "gitsecrets"),
     "web_probes":          ("exploit",     "__builtin__"),
 }
 PHASE_ORDER = ["recon", "fingerprint", "discovery", "vuln", "exploit"]
@@ -48,11 +53,16 @@ MODULE_META = {
     "tls_sslscan": ("sslscan TLS/SSL analysis", "sslscan"),
     "discovery_ffuf": ("ffuf content discovery", "ffuf"),
     "crawl_katana": ("Katana crawl / URL discovery", "katana"),
+    "urls_gau": ("gau historical URL discovery", "gau"),
+    "params_arjun": ("arjun hidden-parameter discovery", "arjun"),
     "vuln_nuclei": ("Nuclei vulnerability scan", "nuclei"),
     "vuln_nikto": ("Nikto web-server scan", "nikto"),
+    "tls_testssl": ("testssl.sh TLS vulnerability scan", "testssl.sh"),
+    "cms_wpscan": ("wpscan WordPress scan", "wpscan"),
     "sqli_sqlmap": ("sqlmap SQLi validation", "sqlmap"),
     "xss_dalfox": ("dalfox XSS validation", "dalfox"),
     "cmdi_commix": ("commix command-injection validation", "commix"),
+    "secrets_gitsecrets": ("Exposed .git → secret scan", "git-dumper+trufflehog"),
     "web_probes": ("Built-in web probes (OWASP)", "builtin"),
 }
 
@@ -375,19 +385,19 @@ def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
                                [StepRec("plan", f"target={url}  scope-host={host}", plan_txt,
                                         "AI operator plan")], False, 0.0, phase="plan"), on_attempt)
 
-    # 2) CLOSED LOOP — the LLM picks the next action from results, until done/budget.
+    # 2) CLOSED LOOP — the LLM picks the ORDER of the next action adaptively from
+    #    results, but EVERY selected module runs (we don't let it skip modules you
+    #    chose — that caused inconsistent coverage / missed findings run-to-run).
     remaining = set(chosen)
     ran: list[tuple[str, int]] = []
-    budget = max_steps
+    budget = max(max_steps, len(chosen))
     while remaining and budget > 0:
         if cancelled and cancelled():
             break
         decision = _next_action(client, url, host, remaining, ran)
         mod = (decision.get("module") or "").strip()
         reason = (decision.get("reason") or "").strip()
-        if mod == "stop":
-            break
-        if mod not in remaining:   # invalid/empty choice → fall back to phase order
+        if mod not in remaining:   # "stop"/invalid/empty → next in phase order (still cover it)
             mod = sorted(remaining, key=lambda m: PHASE_ORDER.index(MODULES[m][0]))[0]
             reason = reason or "next phase in order"
         remaining.discard(mod)
