@@ -203,7 +203,7 @@ tr:hover td{background:var(--panel2)}
 .step pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;padding:11px;
   font-family:var(--mono);font-size:12px;white-space:pre-wrap;word-break:break-word;margin:0 0 10px;
   max-height:240px;overflow:auto}
-.step pre.resp{border-left:3px solid var(--accent)}
+.step pre.resp{border-color:color-mix(in srgb,var(--accent) 38%,var(--line))}
 .evidence{background:var(--evidence-bg);border:1px solid var(--crit);border-radius:8px;padding:10px;
   font-family:var(--mono);font-size:12px;color:var(--evidence-ink);white-space:pre-wrap;word-break:break-word}
 .close-x{float:right;font-size:22px;color:var(--muted);cursor:pointer}
