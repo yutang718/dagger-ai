@@ -10,7 +10,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         nmap sqlmap whatweb ffuf seclists dnsutils \
         golang-go git ca-certificates curl \
-        python3 python3-pip \
+        python3 python3-pip gcc \
     && rm -rf /var/lib/apt/lists/*
 
 # ProjectDiscovery httpx + nuclei (reliable, latest) via go install.
