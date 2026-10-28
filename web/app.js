@@ -215,6 +215,7 @@ async function viewTargets() {
         <td class="mono" style="font-size:12px">${esc(x.endpoint||"—")}</td>
         <td>${x.authorized?`<span class="ok">✔ ${t("common.yes")}</span>`:`<span class="no">✗ ${t("common.no")}</span>`}</td>
         <td style="text-align:right">
+          <button class="sm ghost" data-report="${x.id}">${t("targets.report")}</button>
           <button class="sm ghost" data-prof="${x.id}">${t("targets.bom")}</button>
           ${x.authorized?"":`<button class="sm ghost" data-auth="${x.id}">${t("common.authorize")}</button>`}
           <button class="sm danger" data-del="${x.id}">${t("common.delete")}</button></td></tr>`).join("")}
@@ -231,6 +232,81 @@ async function viewTargets() {
     await api("/targets/"+b.dataset.del,{method:"DELETE"}); viewTargets(); });
   main().querySelectorAll("[data-auth]").forEach(b=>b.onclick=()=>authorizeForm(b.dataset.auth));
   main().querySelectorAll("[data-prof]").forEach(b=>b.onclick=()=>openProfile(b.dataset.prof));
+  main().querySelectorAll("[data-report]").forEach(b=>b.onclick=()=>openReport(b.dataset.report));
+}
+
+/* ---------- per-target pentest report (printable / save-as-PDF) ---------- */
+async function openReport(id){
+  let p, cs, rs;
+  try{ [p,cs,rs]=await Promise.all([api(`/targets/${id}/profile`),api("/campaigns"),api("/runs")]); }
+  catch(e){ toast(e.message); return; }
+  const campIds=new Set(cs.filter(c=>String(c.target_id)===String(id)).map(c=>c.id));
+  const runs=rs.filter(r=>campIds.has(r.campaign_id))
+               .sort((a,b)=>(b.started_at||"").localeCompare(a.started_at||""));
+  const blob=new Blob([reportHtml(p, runs)],{type:"text/html;charset=utf-8"});
+  const url=URL.createObjectURL(blob);
+  const w=window.open(url,"_blank");
+  if(!w){   // popups blocked → download the report instead
+    const a=document.createElement("a");
+    a.href=url; a.download=("dagger-report-"+(p.target.name||"target")+".html").replace(/[^\w.\-]+/g,"_");
+    document.body.appendChild(a); a.click(); a.remove();
+    toast(t("report.downloaded"));
+  }
+  setTimeout(()=>URL.revokeObjectURL(url), 60000);
+}
+function reportHtml(p, runs){
+  const E=esc, sv=p.findings_by_sev||{}, order=["critical","high","medium","low","info"];
+  const SEVC={critical:"#c62828",high:"#e65100",medium:"#f9a825",low:"#1565c0",info:"#616161"};
+  const sevChip=s=>`<span style="display:inline-block;padding:1px 8px;border-radius:12px;font-size:11px;font-weight:700;color:#fff;background:${SEVC[s]||'#616161'}">${E(sevLabel(s))}</span>`;
+  const total=Object.values(sv).reduce((a,b)=>a+b,0);
+  const sevSummary=order.filter(s=>sv[s]).map(s=>`${sevChip(s)} ${sv[s]}`).join("  ")||t("run.noFindings");
+  const vulns=(p.vulnerabilities||[]).map((v,i)=>`
+    <div class="v">
+      <div class="vh">${i+1}. ${sevChip(v.severity)} <b>${E(v.title)}</b>
+        ${v.count>1?`<span class="x">×${v.count}</span>`:""} ${v.owasp?`<span class="tg">${E(v.owasp)}</span>`:""}
+        ${v.atlas?`<span class="tg">${E(v.atlas)}</span>`:""}</div>
+      ${v.description?`<div class="vd">${E(v.description)}</div>`:""}
+      ${v.evidence?`<div class="vl">${t("finding.evidence")}</div><pre>${E(v.evidence)}</pre>`:""}
+      ${v.remediation?`<div class="vl">${t("finding.remediation")}</div><div class="vr">${E(v.remediation)}</div>`:""}
+    </div>`).join("")||`<p>${t("run.noFindings")}</p>`;
+  const row=(k,val)=>val&&val.length?`<tr><th>${E(k)}</th><td>${Array.isArray(val)?val.map(E).join("、"):E(val)}</td></tr>`:"";
+  const comps=(p.components||[]).map(c=>`${c.name}${c.version?" "+c.version:""}`);
+  const ports=(p.ports||[]).map(x=>`${x.port}/${x.proto} ${x.service}${x.product?" ("+x.product+")":""}`);
+  const timeline=runs.length?`<table class="tl"><thead><tr><th>${t("col.run")}</th><th>${t("col.status")}</th>
+      <th>${t("col.attempts")}</th><th>${t("col.successes")}</th><th>${t("col.worst")}</th><th>${t("col.started")}</th></tr></thead><tbody>
+      ${runs.map(r=>{const s=r.summary||{};return `<tr><td>#${r.id}</td><td>${E(statusLabel(r.status))}</td>
+        <td>${s.attempts??"—"}</td><td>${s.successes??"—"}</td><td>${s.worst?E(sevLabel(s.worst)):"—"}</td>
+        <td>${E(fmtDate(r.started_at))}</td></tr>`;}).join("")}</tbody></table>`:`<p>—</p>`;
+  return `<!doctype html><html lang="${I18N.getLang()}"><head><meta charset="utf-8">
+    <title>${t("report.title")} — ${E(p.target.name)}</title><style>
+    *{box-sizing:border-box}body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+      color:#1a1a1a;max-width:860px;margin:0 auto;padding:40px 32px;line-height:1.55;font-size:14px}
+    h1{font-size:24px;margin:0 0 4px}h2{font-size:16px;margin:28px 0 10px;border-bottom:2px solid #eee;padding-bottom:6px}
+    .meta{color:#666;font-size:13px;margin-bottom:6px}.sum{background:#f6f8fa;border:1px solid #e3e8ee;border-radius:8px;padding:14px 16px;margin:10px 0}
+    table{width:100%;border-collapse:collapse;margin:6px 0}th,td{text-align:left;padding:7px 9px;border-bottom:1px solid #eee;font-size:13px;vertical-align:top}
+    th{color:#555;width:150px;font-weight:600}.tl th{width:auto}
+    .v{border:1px solid #e3e8ee;border-radius:8px;padding:12px 14px;margin:10px 0}.vh{font-size:14px}.vh b{margin:0 4px}
+    .vd{color:#444;font-size:13px;margin:7px 0}.vl{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#888;margin:8px 0 3px}
+    .vr{font-size:13px}.x,.tg{display:inline-block;background:#eef1f5;border-radius:5px;padding:1px 6px;font-size:11px;color:#555;font-family:monospace}
+    pre{background:#f6f8fa;border:1px solid #e3e8ee;border-radius:6px;padding:9px;font-size:12px;white-space:pre-wrap;word-break:break-word;margin:0}
+    .noprint{margin:18px 0}button{padding:8px 16px;border:none;border-radius:7px;background:#3b63e0;color:#fff;font-weight:600;cursor:pointer}
+    @media print{.noprint{display:none}body{padding:0}}
+    </style></head><body>
+    <div class="noprint"><button onclick="window.print()">${t("report.print")}</button></div>
+    <h1>${t("report.title")}</h1>
+    <div class="meta"><b>${E(p.target.name)}</b> · ${E(p.endpoint||"—")}</div>
+    <div class="meta">${t("report.generated")}: ${E(new Date().toLocaleString(zh()?"zh-CN":undefined))} ·
+      ${p.runs} ${t("bom.engagements")}${p.last_seen?" · "+t("report.lastScan")+": "+E(fmtDate(p.last_seen)):""}</div>
+    <h2>${t("report.summary")}</h2>
+    <div class="sum">${t("report.summaryText",{n:total,t:E(p.target.name)})}<div style="margin-top:8px">${sevSummary}</div></div>
+    <h2>${t("profile.vulns")} (${(p.vulnerabilities||[]).length})</h2>${vulns}
+    <h2>${t("profile.assets")}</h2>
+    <table>${row(t("bom.webServer"),p.web_servers&&p.web_servers.length?p.web_servers:p.powered_by)}
+      ${row(t("bom.os"),p.os)}${row(t("bom.ports"),ports)}${row(t("bom.components"),comps)}
+      ${row(t("bom.paths")+" ("+(p.paths||[]).length+")",(p.paths||[]).slice(0,40))}${row(t("bom.endpoints"),p.endpoints)}</table>
+    <h2>${t("report.timeline")}</h2>${timeline}
+    <div class="meta" style="margin-top:30px;border-top:1px solid #eee;padding-top:12px">Dagger-AI · ${t("login.legal")}</div>
+    </body></html>`;
 }
 
 async function openProfile(id){
