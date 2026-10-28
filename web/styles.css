@@ -307,3 +307,10 @@ tr:hover td{background:var(--panel2)}
 /* LLM plain-language conclusion of a tool step */
 .conclusion{background:color-mix(in srgb,var(--accent2) 8%,var(--panel2));border:1px solid var(--line);
   border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
+
+/* per-target vulnerabilities + remediation (BOM drawer) */
+.vuln{border:1px solid var(--line);border-radius:9px;padding:10px 12px;margin:7px 0;background:var(--panel2)}
+.vuln-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.vuln-h b{font-size:13px}
+.vuln-fix{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.55}
+.vuln-fix b{color:var(--ink)}

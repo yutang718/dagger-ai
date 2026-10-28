@@ -249,16 +249,25 @@ async function openProfile(id){
   const web=p.web_servers.length?chips(p.web_servers):chips(p.powered_by);
   const sevline=Object.entries(p.findings_by_sev||{}).sort((a,b)=>sevScore(b[0])-sevScore(a[0]))
       .map(([s,n])=>`<span class="badge sev-${s}">${sevLabel(s)} ${n}</span>`).join(" ")||`<span class="no">—</span>`;
+  const vulns=(p.vulnerabilities||[]).map(v=>`
+      <div class="vuln">
+        <div class="vuln-h"><span class="badge sev-${v.severity}">${sevLabel(v.severity)}</span>
+          <b>${esc(v.title)}</b>${v.count>1?`<span class="tag">×${v.count}</span>`:""}
+          ${v.owasp?`<span class="tag">${v.owasp}</span>`:""}${v.atlas?`<span class="tag">${v.atlas}</span>`:""}</div>
+        ${v.remediation?`<div class="vuln-fix"><b>${t("profile.remediation")}:</b> ${esc(v.remediation)}</div>`:""}
+      </div>`).join("")||`<div class="ok" style="font-size:13px">${t("run.noFindings")}</div>`;
   openDrawer(`<span class="close-x" onclick="closeDrawer()">×</span>
     <h2>${esc(p.target.name)} <span class="tag">${p.target.kind}</span></h2>
-    <div class="pb-note">${esc(p.endpoint||"—")} · ${p.runs} ${t("bom.engagements")}${p.last_seen?" · "+fmtDate(p.last_seen):""}</div>
+    <div class="pb-note">${esc(p.endpoint||"—")} · ${p.runs} ${t("bom.engagements")} ·
+      ${sevline}${p.last_seen?" · "+fmtDate(p.last_seen):""}</div>
+    <div class="lab" style="margin-top:6px">${t("profile.vulns")} (${(p.vulnerabilities||[]).length})</div>${vulns}
+    <div class="lab" style="margin-top:18px;border-top:1px solid var(--line);padding-top:14px">${t("profile.assets")}</div>
     ${sec(t("bom.ports"),ports)}
     ${sec(t("bom.os"),chips(p.os))}
     ${sec(t("bom.webServer"),web)}
     ${sec(t("bom.components")+` (${p.components.length})`,comps)}
     ${sec(t("bom.paths")+` (${p.paths.length})`,paths)}
-    ${sec(t("bom.endpoints"),chips(p.endpoints))}
-    ${sec(t("bom.findings"),sevline)}`);
+    ${sec(t("bom.endpoints"),chips(p.endpoints))}`);
 }
 
 function targetForm() {

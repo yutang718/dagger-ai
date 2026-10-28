@@ -7,6 +7,7 @@ explicit authorization note for the target (see config.REQUIRE_AUTHORIZATION).
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -243,7 +244,10 @@ def target_profile(tid: int, _: str = auth.auth_dep, db: Session = Depends(get_s
     camp_ids = [c for c in db.scalars(select(Campaign.id).where(Campaign.target_id == tid))]
     run_ids = [r for r in db.scalars(select(Run.id).where(Run.campaign_id.in_(camp_ids)))] if camp_ids else []
     blobs, findings, sev = [], [], {}
+    vulns = {}
     last = None
+    _rank = {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}
+    _cls = lambda s: re.split(r"[:：—]", s or "")[0].strip()
     if run_ids:
         for (resp,) in db.execute(select(Step.response).join(Attempt, Step.attempt_id == Attempt.id)
                                   .where(Attempt.run_id.in_(run_ids)).limit(5000)):
@@ -253,6 +257,15 @@ def target_profile(tid: int, _: str = auth.auth_dep, db: Session = Depends(get_s
             findings.append({"title": f.title, "severity": f.severity, "owasp": f.owasp,
                              "evidence": f.evidence})
             sev[f.severity] = sev.get(f.severity, 0) + 1
+            # per-target vulnerabilities, grouped by issue class, with remediation
+            key = (_cls(f.title).lower(), f.owasp or "", f.severity)
+            v = vulns.get(key)
+            if v:
+                v["count"] += 1
+            else:
+                vulns[key] = {"title": _cls(f.title), "severity": f.severity, "owasp": f.owasp,
+                              "atlas": f.atlas, "description": f.description,
+                              "remediation": f.remediation, "evidence": f.evidence, "count": 1}
         last = db.scalar(select(func.max(Run.finished_at)).where(Run.id.in_(run_ids)))
     prof = profile.build_profile(t.endpoint, blobs, findings)
     prof.update({
@@ -260,6 +273,8 @@ def target_profile(tid: int, _: str = auth.auth_dep, db: Session = Depends(get_s
         "runs": len(run_ids),
         "findings_by_sev": sev,
         "findings_total": sum(sev.values()),
+        "vulnerabilities": sorted(vulns.values(), key=lambda v: (_rank.get(v["severity"], 0), v["count"]),
+                                  reverse=True),
         "last_seen": last.isoformat() if last else None,
     })
     return prof
