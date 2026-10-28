@@ -10,6 +10,7 @@ output as steps and parsed vulnerabilities as findings).
 """
 from __future__ import annotations
 
+import ipaddress
 from urllib.parse import urlparse
 
 import httpx
@@ -56,10 +57,36 @@ MODULE_META = {
 }
 
 
+# Tools that work against a bare IP or a whole network/CIDR (host vuln scanning),
+# vs. the web-path tools that need a single HTTP URL.
+NETWORK_TOOLS = {"nmap", "httpx", "nuclei"}
+
+
+def _is_cidr(s: str) -> bool:
+    """True for a multi-host network range like 10.0.0.0/24 or 2001:db8::/120."""
+    try:
+        return ipaddress.ip_network(s.strip(), strict=False).num_addresses > 1
+    except ValueError:
+        return False
+
+
 def _url_and_host(endpoint: str) -> tuple[str, str]:
-    if "://" in endpoint:
-        return endpoint, (urlparse(endpoint).hostname or endpoint)
-    return "http://" + endpoint, endpoint.split("/")[0].split(":")[0]
+    e = (endpoint or "").strip()
+    if "://" in e:
+        return e, (urlparse(e).hostname or e)
+    if _is_cidr(e):                       # IP range / CIDR → pass through to nmap/nuclei/httpx
+        return e, e
+    # bare host or single IP
+    return "http://" + e, e.split("/")[0].split(":")[0]
+
+
+def _select_for_target(chosen, host):
+    """For a CIDR/range target, keep only network-capable modules (nmap/httpx/
+    nuclei) so web-path tools aren't pointed at a whole subnet."""
+    if not _is_cidr(host):
+        return chosen
+    net = [m for m in chosen if MODULES[m][1] in NETWORK_TOOLS]
+    return net or [m for m in MODULES if MODULES[m][1] in NETWORK_TOOLS]
 
 
 def run_engagement(endpoint, selected, allow_internal, max_steps, client: LLMClient | None = None,
@@ -98,6 +125,7 @@ def _playbook_engagement(client, url, host, selected, allow_internal, max_steps,
 
     # ---- AI plan (or deterministic note) ----
     chosen = [m for m in MODULES if m in selected] or list(MODULES)
+    chosen = _select_for_target(chosen, host)
     plan_txt = _plan(client, url, host, chosen, lang)
     _emit(attempts, AttemptRec("engagement-plan", f"Plan an authorized assessment of {host}",
                                [StepRec("plan", f"target={url}  scope-host={host}", plan_txt,
@@ -325,6 +353,7 @@ def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
                         on_attempt=None, cancelled=None, lang="en"):
     attempts: list[AttemptRec] = []
     chosen = [m for m in MODULES if m in selected] or list(MODULES)
+    chosen = _select_for_target(chosen, host)
 
     # 1) PLAN — the LLM writes the strategy.
     plan_txt = _plan(client, url, host, chosen, lang)

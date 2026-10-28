@@ -307,17 +307,30 @@ def dalfox(target, options=None, timeout=240):
 
 # ------------------------------------------------- commix (command injection exploit)
 def commix(target, options=None, timeout=300):
+    """Validate OS command injection by exploiting it and running a single BENIGN
+    proof command (`id`). Capturing `id` output proves shell-level code execution
+    (the pentest-report standard) without any payload, reverse shell or change to
+    the target — just evidence that an attacker could get a shell here."""
     if not _which("commix"):
         return _result("commix", "commix", available=False)
-    cmd = ["commix", "--url", target, "--batch", "--skip-waf"]
+    cmd = ["commix", "--url", target, "--batch", "--skip-waf", "--os-cmd=id"]
     rc, out, ms, err = _run(cmd, timeout)
     low = (out or "").lower()
     findings = []
-    if "is vulnerable" in low or ("injection point" in low and "command" in low):
+    m = re.search(r"uid=\d+\(.*?\)\s+gid=\d+\([^)]*\)", out or "")   # output of `id`
+    if m:
+        findings.append({"title": "Remote code execution / shell access (commix)", "severity": "critical",
+                         "owasp": "A03", "mitre": "T1059",
+                         "evidence": "Ran `id` on the target → " + m.group(0),
+                         "description": "commix exploited OS command injection and executed a command on the "
+                                        "target, proving shell-level code execution is achievable.",
+                         "remediation": "Never pass user input to a shell; use safe argument APIs; allow-list "
+                                        "input; run with least privilege and no shell."})
+    elif "is vulnerable" in low or ("injection point" in low and "command" in low):
         findings.append({"title": "OS command injection (commix)", "severity": "critical",
                          "owasp": "A03", "mitre": "T1059",
                          "evidence": _extract(out, "injection", 300) or "commix flagged a command-injection point",
-                         "description": "commix confirmed an OS command injection point.",
+                         "description": "commix confirmed an OS command injection point (not fully exploited).",
                          "remediation": "Avoid shell calls with user input; use safe APIs; allow-list input."})
     return _result("commix", cmd, rc, out, ms, findings, error=err)
 
