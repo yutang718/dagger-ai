@@ -490,7 +490,7 @@ function atkRow(a){
   const s0=(a.steps&&a.steps[0])||{};
   const sub=(a.rationale||s0.prompt||"").slice(0,150);
   return `<div class="atk ${a.success?"ok":""}" data-att="${a.id}">
-    <span class="ti"><div class="tn">${kindBadge(a)} ${esc(a.technique)}
+    <span class="ti"><div class="tn">${kindBadge(a)} ${esc(techLabel(a.technique))}
       ${a.success?`<span class="badge sev-${a.severity}">${t("result.finding")}</span>`
                  :`<span class="no" style="font-size:11px">${t("result.clean")}</span>`}
       ${a.owasp?`<span class="tag">${a.owasp}</span>`:""}${a.atlas?`<span class="tag">${a.atlas}</span>`:""}</div>
@@ -529,13 +529,18 @@ async function viewMonitor(){
      <div class="panel"><div class="empty">${t("monitor.noRun")}</div></div>`; return; }
   const cmap=Object.fromEntries(cs.map(c=>[c.id,c])), tmap=Object.fromEntries(ts.map(x=>[x.id,x]));
   const active = rs.find(r=>["running","queued"].includes(r.status)) || rs[0];
+  let lastSig = "";
   const paint = async () => {
     let d; try{ d = await api("/runs/"+active.id); }catch{ return; }
-    renderMonitor(d, cmap, tmap);
+    // Only re-render when something actually changed, so the feed/graph don't
+    // flicker and re-scroll every second while nothing new is happening.
+    const sig = d.run.status + ":" + d.attempts.length + ":" +
+                d.attempts.reduce((n,a)=>n+a.steps.length,0) + ":" + I18N.getLang() + ":" + Theme.getTheme();
+    if (sig !== lastSig) { lastSig = sig; renderMonitor(d, cmap, tmap); }
     if(!["running","queued"].includes(d.run.status)) clearInterval(S.pollTimer);
   };
   await paint();
-  S.pollTimer = setInterval(paint, 1000);
+  S.pollTimer = setInterval(paint, 1500);
 }
 function renderMonitor(d, cmap, tmap){
   const r=d.run, live=["running","queued"].includes(r.status);
@@ -575,8 +580,7 @@ function renderMonitor(d, cmap, tmap){
         <div class="feed">${feedHtml(events)}</div></div>
     </div>`;
   $("#mon-open").onclick=()=>openRun(r.id);
-  AttackGraph.render($("#mon-graph"), {attempts:attempts.filter(a=>!["plan","report","validate"].includes(a.phase)),
-    targetName:tgt.name||t("monitor.target"),
+  AttackGraph.render($("#mon-graph"), {attempts, targetName:tgt.name||t("monitor.target"),
     endpoint:tgt.endpoint||"", phaseLabel:(k)=>phaseLabel(k), stepsLabel:t("col.steps")},
     (grp)=>openAttempt(grp.find(a=>a.success)||grp[0]));
 }
@@ -594,7 +598,7 @@ function feedHtml(events){
   if(!events.length) return `<div class="no" style="font-size:12px;padding:10px 0">${t("monitor.waiting")}</div>`;
   return events.slice().reverse().slice(0,40).map(({a,st})=>`
     <div class="fev ${a.success?"ok":""}">
-      <div class="fh"><span>${kindBadge(a)} ${esc(a.phase?phaseLabel(a.phase)+" · ":"")}<span class="mono">${esc(a.technique)}</span></span>
+      <div class="fh"><span>${kindBadge(a)} ${phaseChip(a)} <span class="mono">${esc(techLabel(a.technique))}</span></span>
         <span>${st.latency_ms||0} ms ${a.success?`· <b style="color:var(--crit)">${t("monitor.exploited")}</b>`:""}</span></div>
       <div class="fp">${esc((a.rationale||st.response||st.prompt||"").slice(0,180))}</div></div>`).join("");
 }
@@ -678,7 +682,7 @@ function openAttempt(a){
         <div class="lab">${t("attempt.targetResponse")}</div>
         <pre class="resp">${esc(s.response)}</pre></div></div>`).join("");
   openDrawer(`<span class="close-x" onclick="closeDrawer()">×</span>
-    <h2>${a.success?"✔ ":""}${esc(a.probe||a.technique)}</h2>
+    <h2>${a.success?"✔ ":""}${esc(techLabel(a.probe||a.technique))}</h2>
     <div class="row" style="gap:8px;margin-bottom:10px">
       ${kindBadge(a)}
       <span class="badge sev-${a.severity}">${sevLabel(a.severity)}</span>
@@ -724,6 +728,20 @@ const aiBadge = () => `<span class="kind ai">${ICON_AI} ${t("kind.ai")}</span>`;
 const stepKindBadge = role => ((role==="tool"||role==="request"))
   ? `<span class="kind tool">${ICON_TOOL} ${t("kind.tool")}</span>`
   : `<span class="kind ai">${ICON_AI} ${t("kind.ai")}</span>`;
+/* localize a stored (English) module/probe technique name via meta */
+function techLabel(tech){
+  if(!S.meta || !zh()) return tech;
+  const all=[...(S.meta.pentest_modules||[]),...(S.meta.probes||[])];
+  const m=all.find(x=>x.name===tech);
+  return (m && m.name_zh) ? m.name_zh : tech;
+}
+/* phase chip whose dot matches the kill-chain graph node colour */
+const _SEVVAR={critical:"var(--crit)",high:"var(--high)",medium:"var(--med)",low:"var(--low)",info:"var(--info)"};
+function phaseChip(a){
+  if(!a.phase) return "";
+  const col=a.success?(_SEVVAR[a.severity]||"var(--info)"):"var(--muted)";
+  return `<span class="pchip"><span class="pdot" style="background:${col}"></span>${esc(phaseLabel(a.phase))}</span>`;
+}
 
 /* ---------- start ---------- */
 applyI18n();
