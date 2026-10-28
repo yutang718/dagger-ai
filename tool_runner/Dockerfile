@@ -7,10 +7,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1
 
 # Core toolchain from Kali repos + Go to build ProjectDiscovery tools.
+# The small runner API (FastAPI + uvicorn + pydantic) is installed from Kali's
+# own apt packages, which match the base image's Python. This avoids pip
+# compiling pydantic-core from Rust source — Kali's Python has no prebuilt
+# wheel for it, and the from-source build fails to link in this image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         nmap sqlmap whatweb ffuf seclists dnsutils \
         golang-go git ca-certificates curl \
-        python3 python3-pip gcc \
+        python3 python3-fastapi python3-uvicorn python3-pydantic \
     && rm -rf /var/lib/apt/lists/*
 
 # ProjectDiscovery httpx + nuclei (reliable, latest) via go install.
@@ -18,11 +22,10 @@ RUN go install github.com/projectdiscovery/httpx/cmd/httpx@latest \
     && go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
     && /root/go/bin/nuclei -update-templates || true
 
-RUN pip3 install --no-cache-dir --break-system-packages \
-        fastapi==0.115.6 "uvicorn[standard]==0.34.0" pydantic==2.10.4
-
 WORKDIR /srv
 COPY tools.py runner.py ./
 
 EXPOSE 9020
-CMD ["uvicorn", "runner:app", "--host", "0.0.0.0", "--port", "9020"]
+# Launch via `python3 -m uvicorn` — Kali's apt uvicorn package doesn't put a
+# `uvicorn` console script on PATH, but the module is importable.
+CMD ["python3", "-m", "uvicorn", "runner:app", "--host", "0.0.0.0", "--port", "9020"]
