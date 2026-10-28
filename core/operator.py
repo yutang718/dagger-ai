@@ -141,12 +141,12 @@ def _playbook_engagement(client, url, host, selected, allow_internal, max_steps,
         phase, tool = MODULES[mod]
         budget -= 1
         if tool == "__builtin__":
-            for a in _web_probe_attempts(url):
+            for a in _web_probe_attempts(url, lang):
                 _emit(attempts, a, on_attempt)
             continue
         tgt = host if tool == "nmap" else url
         res = tools_client.run(tool, tgt, allow_internal=allow_internal)
-        _emit(attempts, _attempt_from_tool(mod, phase, res), on_attempt)
+        _emit(attempts, _attempt_from_tool(mod, phase, res, lang), on_attempt)
 
     # ---- AI executive summary ----
     summary = _summary(client, host, attempts, lang)
@@ -157,14 +157,16 @@ def _playbook_engagement(client, url, host, selected, allow_internal, max_steps,
     return attempts
 
 
-def _attempt_from_tool(mod, phase, res) -> AttemptRec:
+def _attempt_from_tool(mod, phase, res, lang="en") -> AttemptRec:
     name, _ = MODULE_META.get(mod, (mod, mod))
+    zh = lang == "zh"
     if not res.get("available", True):
         return AttemptRec(name, f"Run {mod}",
                           [StepRec("tool", res.get("command", mod),
                                    f"[tool not installed in tool-runner] {res.get('error','')}",
                                    f"{phase}: {name}")],
-                          False, 0.0, rationale="Tool unavailable.", phase=phase)
+                          False, 0.0,
+                          rationale=("该工具在工具运行器中不可用。" if zh else "Tool unavailable."), phase=phase)
     findings = res.get("findings", []) or []
     obs = res.get("observations", []) or []
     out = (res.get("stdout", "") or "")
@@ -175,8 +177,12 @@ def _attempt_from_tool(mod, phase, res) -> AttemptRec:
         body += f"\n[error] {res['error']}"
     success = bool(findings)
     evidence = findings[0].get("evidence", "") if findings else ""
-    rationale = (f"{len(findings)} finding(s) from {mod}." if findings
-                 else f"No findings from {mod}; {len(obs)} observation(s).")
+    if zh:
+        rationale = (f"{name}：发现 {len(findings)} 项问题。" if findings
+                     else f"{name}：未发现问题；{len(obs)} 条观测。")
+    else:
+        rationale = (f"{len(findings)} finding(s) from {name}." if findings
+                     else f"No findings from {name}; {len(obs)} observation(s).")
     return AttemptRec(name, f"Run {mod}",
                       [StepRec("tool", res.get("command", mod), body[:6000],
                                f"{phase}: {name}", res.get("duration_ms", 0))],
@@ -184,8 +190,9 @@ def _attempt_from_tool(mod, phase, res) -> AttemptRec:
                       findings=findings, phase=phase)
 
 
-def _web_probe_attempts(url) -> list[AttemptRec]:
+def _web_probe_attempts(url, lang="en") -> list[AttemptRec]:
     """Run the in-process web probes (OWASP) against the URL as part of exploit phase."""
+    from . import translations
     out = []
     web = [p for p in all_probes() if getattr(p, "category", "") == "web"]
     try:
@@ -199,6 +206,7 @@ def _web_probe_attempts(url) -> list[AttemptRec]:
                 recs = p.execute(url, http)
             except Exception as e:  # noqa: BLE001
                 continue
+            pname = translations.PROBE_ZH.get(p.id, (p.name, ""))[0] if lang == "zh" else p.name
             for a in recs:
                 a.phase = "exploit"
                 if a.success:
@@ -207,6 +215,9 @@ def _web_probe_attempts(url) -> list[AttemptRec]:
                         "mitre": p.mitre, "evidence": a.evidence,
                         "description": p.description, "remediation": p.remediation,
                     }]
+                if lang == "zh":   # localize the conclusion shown in the UI
+                    a.rationale = (f"确认漏洞：{pname}（详见证据）。" if a.success
+                                   else f"未发现 {pname} 问题。")
                 out.append(a)
     finally:
         http.close()
@@ -304,7 +315,10 @@ _INTERP_SYS = (
 
 def _lang_suffix(lang: str) -> str:
     """Make the LLM answer in the operator's UI language."""
-    return "\nRespond in Simplified Chinese (简体中文)." if lang == "zh" else ""
+    if lang == "zh":
+        return ("\n\nIMPORTANT: Write your ENTIRE response in Simplified Chinese (简体中文) — "
+                "every sentence, including technical explanations. Do not answer in English.")
+    return ""
 
 
 def _interpret(client, mod, res, lang="en") -> str:
@@ -331,12 +345,12 @@ def _run_module(mod, url, host, allow_internal, reason, client=None, lang="en"):
     phase, tool = MODULES[mod]
     out = []
     if tool == "__builtin__":
-        out = _web_probe_attempts(url)
+        out = _web_probe_attempts(url, lang)
         hits = sum(1 for a in out if a.success)
     else:
         tgt = host if tool == "nmap" else url
         res = tools_client.run(tool, tgt, allow_internal=allow_internal)
-        a = _attempt_from_tool(mod, phase, res)
+        a = _attempt_from_tool(mod, phase, res, lang)
         if a.steps and reason:
             a.steps[0].note = f"AI chose this — {reason} · " + a.steps[0].note
         concl = _interpret(client, mod, res, lang)
