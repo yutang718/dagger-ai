@@ -59,4 +59,4 @@ REQUEST_TIMEOUT = int(_env("DAGGER_REQUEST_TIMEOUT", default="60"))
 DEMO_TARGET_URL = _env("DAGGER_DEMO_TARGET_URL", default="http://vulnerable-target:9009/chat")
 DEMO_WEB_URL = _env("DAGGER_DEMO_WEB_URL", default="http://vulnerable-webapp:9010")
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
