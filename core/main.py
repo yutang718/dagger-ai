@@ -147,7 +147,8 @@ def test_llm_settings(_: str = auth.auth_dep):
     ok = bool(out.strip())
     return {"ok": ok, "online": True, "latency_ms": ms,
             "model": client.model or "(provider default)", "sample": (out or "")[:120],
-            "detail": "Response received." if ok else "No response — check base URL / key / model."}
+            "detail": "Response received." if ok else
+                      (client.last_error or "No response — check base URL / key / model.")}
 
 
 # ----------------------------------------------------------------- targets

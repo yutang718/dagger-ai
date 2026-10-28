@@ -510,7 +510,8 @@ async function viewSettings(){
     <div class="grid2">
       <div class="panel"><h3>${t("settings.llmTitle")}</h3>
         <label>${t("settings.provider")}</label>
-        <select id="s-prov">${prov("offline")}${prov("openai")}${prov("anthropic")}</select>
+        <select id="s-prov">${prov("offline")}${prov("openai")}${prov("azure")}${prov("anthropic")}</select>
+        <div id="s-azure-note" class="note" style="margin:10px 0 0;display:none">${t("settings.azureHint")}</div>
         <div id="s-online">
           <label>${t("settings.baseUrl")}</label>
           <input id="s-base" value="${esc(cfg.base_url||"")}" placeholder="https://api.openai.com/v1">
@@ -535,8 +536,10 @@ async function viewSettings(){
   const statusEl=$("#s-status");
   const paintStatus = online => { statusEl.innerHTML =
     (online?`<span class="ok">● </span>${t("settings.online")}`:`<span class="no">○ </span>${t("settings.offlineMode")}`); };
-  const syncProv=()=>{ const off=$("#s-prov").value==="offline";
-    $("#s-online").style.display=off?"none":"block"; paintStatus(!off && (cfg.has_api_key||$("#s-base").value)); };
+  const syncProv=()=>{ const v=$("#s-prov").value, off=v==="offline";
+    $("#s-online").style.display=off?"none":"block";
+    $("#s-azure-note").style.display=v==="azure"?"block":"none";
+    paintStatus(!off && (cfg.has_api_key||$("#s-base").value)); };
   $("#s-prov").onchange=syncProv; syncProv();
   $("#s-save").onclick=async()=>{
     const body={provider:$("#s-prov").value, base_url:$("#s-base")?$("#s-base").value:"",

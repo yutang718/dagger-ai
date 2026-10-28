@@ -19,7 +19,7 @@ from .db import SessionLocal
 from .models import Setting
 
 LLM_KEY = "llm"
-_ALLOWED_PROVIDERS = ("offline", "openai", "anthropic")
+_ALLOWED_PROVIDERS = ("offline", "openai", "anthropic", "azure")
 
 
 def _get(key: str) -> dict[str, Any]:
@@ -64,7 +64,7 @@ def llm_config_public() -> dict[str, Any]:
     cfg = llm_config()
     key = cfg.pop("api_key", "")
     cfg["has_api_key"] = bool(key)
-    cfg["online"] = cfg["provider"] in ("openai", "anthropic") and bool(key or cfg["base_url"])
+    cfg["online"] = cfg["provider"] in ("openai", "anthropic", "azure") and bool(key or cfg["base_url"])
     return cfg
 
 

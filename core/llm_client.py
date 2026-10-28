@@ -25,6 +25,7 @@ class LLMClient:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
+        self.last_error = ""   # populated on a failed complete() for diagnostics
 
     @classmethod
     def attacker(cls) -> "LLMClient":
@@ -36,18 +37,31 @@ class LLMClient:
 
     @property
     def online(self) -> bool:
-        return self.provider in ("openai", "anthropic") and bool(self.api_key or self.base_url)
+        return self.provider in ("openai", "anthropic", "azure") and bool(self.api_key or self.base_url)
 
     def complete(self, system: str, user: str, temperature: float = 0.9) -> str:
         """Single-shot completion. Returns '' on offline/failure so callers can
-        fall back to their deterministic path."""
+        fall back to their deterministic path. On failure, self.last_error holds
+        a human-readable reason (including the provider's response body) so the
+        Settings 'test connection' can show what actually went wrong."""
         if not self.online:
             return ""
+        self.last_error = ""
         try:
             if self.provider == "anthropic":
                 return self._anthropic(system, user, temperature)
+            if self.provider == "azure":
+                return self._azure(system, user, temperature)
             return self._openai(system, user, temperature)
-        except Exception:
+        except Exception as e:
+            detail = f"{type(e).__name__}: {e}"
+            resp = getattr(e, "response", None)
+            if resp is not None:
+                try:
+                    detail += " — " + (resp.text or "")[:400]
+                except Exception:
+                    pass
+            self.last_error = detail
             return ""
 
     def _openai(self, system: str, user: str, temperature: float) -> str:
@@ -65,6 +79,37 @@ class LLMClient:
         }
         with httpx.Client(timeout=config.REQUEST_TIMEOUT) as c:
             r = c.post(f"{base}/chat/completions", headers=headers, json=payload)
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"]
+
+    # Azure OpenAI uses api-key auth, the deployment in the URL path, and a
+    # required api-version. `base_url` is the resource endpoint
+    # (https://<resource>.openai.azure.com) OR a full chat-completions URL;
+    # `model` is the deployment name. api-version can be given in base_url's
+    # query string, else a current stable default is used.
+    _AZURE_API_VERSION = "2024-10-21"
+
+    def _azure(self, system: str, user: str, temperature: float) -> str:
+        from urllib.parse import urlsplit, parse_qs
+        base = self.base_url
+        ver = (parse_qs(urlsplit(base).query).get("api-version") or [None])[0] \
+            or self._AZURE_API_VERSION
+        if "/chat/completions" in base:          # user pasted the full deployment URL
+            url = base
+            if "api-version=" not in url:
+                url += ("&" if "?" in url else "?") + "api-version=" + ver
+        else:                                     # build from resource host + deployment
+            host = base.split("/openai/")[0].rstrip("/")
+            deployment = self.model or "gpt-4o"
+            url = f"{host}/openai/deployments/{deployment}/chat/completions?api-version={ver}"
+        headers = {"Content-Type": "application/json", "api-key": self.api_key}
+        payload = {
+            "temperature": temperature,
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": user}],
+        }
+        with httpx.Client(timeout=config.REQUEST_TIMEOUT) as c:
+            r = c.post(url, headers=headers, json=payload)
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"]
 
