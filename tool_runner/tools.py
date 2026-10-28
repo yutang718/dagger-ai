@@ -31,7 +31,10 @@ def _which(bin_):
 def _run(cmd, timeout):
     start = time.time()
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        # stdin=DEVNULL so tools don't treat the (non-tty) server stdin as input —
+        # e.g. commix otherwise reads its target list from stdin and does nothing.
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                           stdin=subprocess.DEVNULL)
         out = (p.stdout or "") + (("\n[stderr]\n" + p.stderr) if p.stderr else "")
         return p.returncode, out, int((time.time() - start) * 1000), None
     except subprocess.TimeoutExpired as e:
@@ -313,7 +316,12 @@ def commix(target, options=None, timeout=300):
     the target — just evidence that an attacker could get a shell here."""
     if not _which("commix"):
         return _result("commix", "commix", available=False)
-    cmd = ["commix", "--url", target, "--batch", "--skip-waf", "--os-cmd=id"]
+    # commix treats a non-TTY stdin as a piped targets list and ignores --url, so
+    # run it under `script` to give it a pseudo-tty where -u is honoured.
+    import shlex
+    inner = "commix -u " + shlex.quote(target) + " --batch --skip-waf --os-cmd=id --level=2"
+    cmd = (["script", "-qec", inner, "/dev/null"] if _which("script")
+           else ["commix", "--url", target, "--batch", "--skip-waf", "--os-cmd=id"])
     rc, out, ms, err = _run(cmd, timeout)
     low = (out or "").lower()
     findings = []
