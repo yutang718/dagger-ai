@@ -265,3 +265,11 @@ tr:hover td{background:var(--panel2)}
 
 /* long lists stay navigable */
 .scrollbox{max-height:360px;overflow:auto;margin:-4px -4px 0;padding:4px}
+
+/* AI-decision vs tool-run markers */
+.kind{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;padding:1px 7px;
+  border-radius:20px;text-transform:uppercase;letter-spacing:.04em;vertical-align:middle;white-space:nowrap}
+.kind.ai{color:var(--accent2);background:color-mix(in srgb,var(--accent2) 15%,transparent);
+  border:1px solid color-mix(in srgb,var(--accent2) 45%,transparent)}
+.kind.tool{color:var(--muted);background:var(--panel2);border:1px solid var(--line)}
+.kind .kic{flex:none}

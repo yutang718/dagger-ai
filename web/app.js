@@ -462,7 +462,7 @@ function renderRun(d){
 }
 function playbookPanel(title, a){
   const s=(a.steps&&a.steps[0])||{};
-  return `<div class="panel"><h3>${esc(title)}</h3>
+  return `<div class="panel"><h3>${esc(title)} ${aiBadge()}</h3>
     ${s.note?`<div class="pb-note">${esc(s.note)}</div>`:""}
     <div class="playbook">${esc(s.response||"")}</div></div>`;
 }
@@ -487,7 +487,7 @@ function atkRow(a){
   const s0=(a.steps&&a.steps[0])||{};
   const sub=(s0.prompt||a.rationale||"").slice(0,120);
   return `<div class="atk ${a.success?"ok":""}" data-att="${a.id}">
-    <span class="ti"><div class="tn">${esc(a.technique)}
+    <span class="ti"><div class="tn">${kindBadge(a)} ${esc(a.technique)}
       ${a.success?`<span class="badge sev-${a.severity}">${t("result.finding")}</span>`
                  :`<span class="no" style="font-size:11px">${t("result.clean")}</span>`}
       ${a.owasp?`<span class="tag">${a.owasp}</span>`:""}${a.atlas?`<span class="tag">${a.atlas}</span>`:""}</div>
@@ -591,7 +591,7 @@ function feedHtml(events){
   if(!events.length) return `<div class="no" style="font-size:12px;padding:10px 0">${t("monitor.waiting")}</div>`;
   return events.slice().reverse().slice(0,40).map(({a,st})=>`
     <div class="fev ${a.success?"ok":""}">
-      <div class="fh"><span>${esc(a.phase?phaseLabel(a.phase)+" · ":"")}<span class="mono">${esc(a.technique)}</span></span>
+      <div class="fh"><span>${kindBadge(a)} ${esc(a.phase?phaseLabel(a.phase)+" · ":"")}<span class="mono">${esc(a.technique)}</span></span>
         <span>${st.latency_ms||0} ms ${a.success?`· <b style="color:var(--crit)">${t("monitor.exploited")}</b>`:""}</span></div>
       <div class="fp">${esc((st.response||st.prompt||"").slice(0,180))}</div></div>`).join("");
 }
@@ -668,7 +668,7 @@ async function viewSettings(){
 function openAttempt(a){
   if(!a) return;
   const steps = a.steps.map(s=>`
-    <div class="step"><div class="sh"><span>${t("attempt.step")} ${s.idx+1} · ${esc(s.role)}</span>
+    <div class="step"><div class="sh"><span>${stepKindBadge(s.role)} ${t("attempt.step")} ${s.idx+1} · ${esc(s.role)}</span>
       <span>${s.latency_ms} ms</span></div>
       <div class="io"><div class="lab">▸ ${esc(s.note||t("attempt.attackPrompt"))}</div>
         <pre>${esc(s.prompt)}</pre>
@@ -677,6 +677,7 @@ function openAttempt(a){
   openDrawer(`<span class="close-x" onclick="closeDrawer()">×</span>
     <h2>${a.success?"✔ ":""}${esc(a.probe||a.technique)}</h2>
     <div class="row" style="gap:8px;margin-bottom:10px">
+      ${kindBadge(a)}
       <span class="badge sev-${a.severity}">${sevLabel(a.severity)}</span>
       ${a.phase?`<span class="tag">${esc(phaseLabel(a.phase))}</span>`:""}
       ${a.owasp?`<span class="tag">${a.owasp}</span>`:""}${a.atlas?`<span class="tag">${a.atlas}</span>`:""}
@@ -703,6 +704,22 @@ function closeDrawer(){ $("#drawer").classList.add("hidden"); }
 $("#drawer").addEventListener("click",e=>{ if(e.target.id==="drawer") closeDrawer(); });
 
 const sevScore = s => ({critical:5,high:4,medium:3,low:2,info:1}[s]||0);
+
+/* ---------- AI-decision vs tool-run marker ---------- */
+const ICON_AI = `<svg class="kic" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M8 1l1.5 3.8L13.5 6l-3.8 1.5L8 11 6.5 7.5 2.5 6l3.9-1.5z" fill="currentColor"/></svg>`;
+const ICON_TOOL = `<svg class="kic" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M2.8 4.2l3 3-3 3M8 12h5.2" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+function kindOf(a){
+  if(["plan","report","validate"].includes(a.phase)) return "ai";
+  const role=((a.steps&&a.steps[0])||{}).role;
+  return (role==="tool"||role==="request") ? "tool" : "ai";
+}
+const kindBadge = a => (kindOf(a)==="ai")
+  ? `<span class="kind ai">${ICON_AI} ${t("kind.ai")}</span>`
+  : `<span class="kind tool">${ICON_TOOL} ${t("kind.tool")}</span>`;
+const aiBadge = () => `<span class="kind ai">${ICON_AI} ${t("kind.ai")}</span>`;
+const stepKindBadge = role => ((role==="tool"||role==="request"))
+  ? `<span class="kind tool">${ICON_TOOL} ${t("kind.tool")}</span>`
+  : `<span class="kind ai">${ICON_AI} ${t("kind.ai")}</span>`;
 
 /* ---------- start ---------- */
 applyI18n();

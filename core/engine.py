@@ -56,17 +56,19 @@ def _execute(run_id: int) -> None:
 
         if target.kind == "host":
             # AI pentest engagement: the operator drives real tools + web probes.
+            # Persist each attempt as it is produced so the Live Monitor streams.
             from . import operator
-            attempts = operator.run_engagement(
+            def _emit_host(a):
+                _persist(db, run_id, a, None, ctx)
+                db.commit()
+            operator.run_engagement(
                 target.endpoint or "", campaign.probes or list(operator.MODULES),
                 bool(target.allow_internal),
                 min(campaign.max_turns or config.MAX_TOOL_STEPS, config.MAX_TOOL_STEPS),
-                attacker.client)
-            for a in attempts:
-                if run_id not in _RUNNING:
-                    run.status = "stopped"; break
-                _persist(db, run_id, a, None, ctx)
-                db.commit()
+                attacker.client, on_attempt=_emit_host,
+                cancelled=lambda: run_id not in _RUNNING)
+            if run_id not in _RUNNING:
+                run.status = "stopped"
         else:
             for probe_id in (campaign.probes or []):
                 if run_id not in _RUNNING:

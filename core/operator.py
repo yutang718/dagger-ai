@@ -48,49 +48,68 @@ def _url_and_host(endpoint: str) -> tuple[str, str]:
     return "http://" + endpoint, endpoint.split("/")[0].split(":")[0]
 
 
-def run_engagement(endpoint, selected, allow_internal, max_steps, client: LLMClient | None = None):
+def run_engagement(endpoint, selected, allow_internal, max_steps, client: LLMClient | None = None,
+                   on_attempt=None, cancelled=None):
     """Dispatch: an LLM-driven closed loop when an attacker LLM is online
     (plan → choose next action from results → execute → validate → re-plan →
-    summarise), else the deterministic default playbook."""
+    summarise), else the deterministic default playbook.
+
+    `on_attempt(a)` is called for each attempt as it is produced, so the engine
+    can persist it immediately and the Live Monitor streams progress. `cancelled()`
+    is polled between steps so a Stop takes effect mid-engagement."""
     client = client or LLMClient.attacker()
     url, host = _url_and_host(endpoint)
     if client.online:
-        return _agentic_engagement(client, url, host, selected, allow_internal, max_steps)
-    return _playbook_engagement(client, url, host, selected, allow_internal, max_steps)
+        return _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
+                                   on_attempt, cancelled)
+    return _playbook_engagement(client, url, host, selected, allow_internal, max_steps,
+                                on_attempt, cancelled)
 
 
-def _playbook_engagement(client, url, host, selected, allow_internal, max_steps):
+def _emit(attempts, a, on_attempt):
+    attempts.append(a)
+    if on_attempt:
+        try:
+            on_attempt(a)
+        except Exception:
+            pass
+    return a
+
+
+def _playbook_engagement(client, url, host, selected, allow_internal, max_steps,
+                         on_attempt=None, cancelled=None):
     attempts: list[AttemptRec] = []
 
     # ---- AI plan (or deterministic note) ----
     chosen = [m for m in MODULES if m in selected] or list(MODULES)
     plan_txt = _plan(client, url, host, chosen)
-    attempts.append(AttemptRec("engagement-plan", f"Plan an authorized assessment of {host}",
+    _emit(attempts, AttemptRec("engagement-plan", f"Plan an authorized assessment of {host}",
                                [StepRec("plan", f"target={url}  scope-host={host}", plan_txt,
                                         "AI operator plan" if client.online else "default playbook")],
-                               False, 0.0, phase="plan"))
+                               False, 0.0, phase="plan"), on_attempt)
 
     # ---- ordered tool runs ----
     ordered = sorted(chosen, key=lambda m: PHASE_ORDER.index(MODULES[m][0]))
     budget = max_steps
     for mod in ordered:
-        if budget <= 0:
+        if budget <= 0 or (cancelled and cancelled()):
             break
         phase, tool = MODULES[mod]
         budget -= 1
         if tool == "__builtin__":
-            attempts.extend(_web_probe_attempts(url))
+            for a in _web_probe_attempts(url):
+                _emit(attempts, a, on_attempt)
             continue
         tgt = host if tool == "nmap" else url
         res = tools_client.run(tool, tgt, allow_internal=allow_internal)
-        attempts.append(_attempt_from_tool(mod, phase, res))
+        _emit(attempts, _attempt_from_tool(mod, phase, res), on_attempt)
 
     # ---- AI executive summary ----
     summary = _summary(client, host, attempts)
-    attempts.append(AttemptRec("engagement-summary", f"Summarise findings for {host}",
+    _emit(attempts, AttemptRec("engagement-summary", f"Summarise findings for {host}",
                                [StepRec("report", "executive summary", summary,
                                         "AI operator summary" if client.online else "auto summary")],
-                               False, 0.0, phase="report"))
+                               False, 0.0, phase="report"), on_attempt)
     return attempts
 
 
@@ -245,21 +264,24 @@ def _run_module(mod, url, host, allow_internal, reason):
     return out, hits
 
 
-def _agentic_engagement(client, url, host, selected, allow_internal, max_steps):
+def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
+                        on_attempt=None, cancelled=None):
     attempts: list[AttemptRec] = []
     chosen = [m for m in MODULES if m in selected] or list(MODULES)
 
     # 1) PLAN — the LLM writes the strategy.
     plan_txt = _plan(client, url, host, chosen)
-    attempts.append(AttemptRec("engagement-plan", f"Plan an authorized assessment of {host}",
+    _emit(attempts, AttemptRec("engagement-plan", f"Plan an authorized assessment of {host}",
                                [StepRec("plan", f"target={url}  scope-host={host}", plan_txt,
-                                        "AI operator plan")], False, 0.0, phase="plan"))
+                                        "AI operator plan")], False, 0.0, phase="plan"), on_attempt)
 
     # 2) CLOSED LOOP — the LLM picks the next action from results, until done/budget.
     remaining = set(chosen)
     ran: list[tuple[str, int]] = []
     budget = max_steps
     while remaining and budget > 0:
+        if cancelled and cancelled():
+            break
         decision = _next_action(client, url, host, remaining, ran)
         mod = (decision.get("module") or "").strip()
         reason = (decision.get("reason") or "").strip()
@@ -271,19 +293,20 @@ def _agentic_engagement(client, url, host, selected, allow_internal, max_steps):
         remaining.discard(mod)
         budget -= 1
         recs, hits = _run_module(mod, url, host, allow_internal, reason)
-        attempts.extend(recs)
+        for a in recs:
+            _emit(attempts, a, on_attempt)
         ran.append((mod, hits))
 
     # 3) VALIDATE — the LLM reviews the findings (true positives / FPs / priorities).
     val = _validate(client, host, attempts)
     if val:
-        attempts.append(AttemptRec("validation", f"Validate findings for {host}",
+        _emit(attempts, AttemptRec("validation", f"Validate findings for {host}",
                                    [StepRec("report", "LLM validation of findings", val,
-                                            "AI operator validation")], False, 0.0, phase="validate"))
+                                            "AI operator validation")], False, 0.0, phase="validate"), on_attempt)
 
     # 4) SUMMARY — executive summary.
     summary = _summary(client, host, attempts)
-    attempts.append(AttemptRec("engagement-summary", f"Summarise findings for {host}",
+    _emit(attempts, AttemptRec("engagement-summary", f"Summarise findings for {host}",
                                [StepRec("report", "executive summary", summary,
-                                        "AI operator summary")], False, 0.0, phase="report"))
+                                        "AI operator summary")], False, 0.0, phase="report"), on_attempt)
     return attempts

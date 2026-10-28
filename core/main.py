@@ -32,6 +32,16 @@ WEB = Path(__file__).resolve().parent.parent / "web"
 @app.on_event("startup")
 def _startup():
     init_db()
+    # Runs that were in-flight when the process last stopped cannot resume (their
+    # worker threads are gone), so mark them stopped instead of leaving orphans.
+    from sqlalchemy import update
+    from .db import SessionLocal
+    db = SessionLocal()
+    try:
+        db.execute(update(Run).where(Run.status.in_(("running", "queued"))).values(status="stopped"))
+        db.commit()
+    finally:
+        db.close()
 
 
 # ----------------------------------------------------------------- schemas
