@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import auth, config, settings, taxonomy, tools_client, translations
+from . import auth, config, profile, settings, taxonomy, tools_client, translations
 from .db import get_session, init_db
 from .engine import start_run, stop_run
 from .llm_client import LLMClient
@@ -221,6 +221,38 @@ def create_demo_host(_: str = auth.auth_dep, db: Session = Depends(get_session))
 def tools_status(_: str = auth.auth_dep):
     """Which pentest binaries are installed in the tool-runner right now."""
     return {"runner_url": config.TOOL_RUNNER_URL, "tools": tools_client.available()}
+
+
+@app.get("/api/targets/{tid}/profile")
+def target_profile(tid: int, _: str = auth.auth_dep, db: Session = Depends(get_session)):
+    """Target intel / BOM, derived from everything its engagements observed —
+    open ports, OS, web-server versions, components, discovered paths."""
+    t = db.get(Target, tid)
+    if not t:
+        raise HTTPException(404, "target not found")
+    camp_ids = [c for c in db.scalars(select(Campaign.id).where(Campaign.target_id == tid))]
+    run_ids = [r for r in db.scalars(select(Run.id).where(Run.campaign_id.in_(camp_ids)))] if camp_ids else []
+    blobs, findings, sev = [], [], {}
+    last = None
+    if run_ids:
+        for (resp,) in db.execute(select(Step.response).join(Attempt, Step.attempt_id == Attempt.id)
+                                  .where(Attempt.run_id.in_(run_ids)).limit(5000)):
+            if resp:
+                blobs.append(resp)
+        for f in db.scalars(select(Finding).where(Finding.run_id.in_(run_ids))):
+            findings.append({"title": f.title, "severity": f.severity, "owasp": f.owasp,
+                             "evidence": f.evidence})
+            sev[f.severity] = sev.get(f.severity, 0) + 1
+        last = db.scalar(select(func.max(Run.finished_at)).where(Run.id.in_(run_ids)))
+    prof = profile.build_profile(t.endpoint, blobs, findings)
+    prof.update({
+        "target": _target_json(t),
+        "runs": len(run_ids),
+        "findings_by_sev": sev,
+        "findings_total": sum(sev.values()),
+        "last_seen": last.isoformat() if last else None,
+    })
+    return prof
 
 
 @app.post("/api/targets/{tid}/authorize")

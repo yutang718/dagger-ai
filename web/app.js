@@ -215,6 +215,7 @@ async function viewTargets() {
         <td class="mono" style="font-size:12px">${esc(x.endpoint||"—")}</td>
         <td>${x.authorized?`<span class="ok">✔ ${t("common.yes")}</span>`:`<span class="no">✗ ${t("common.no")}</span>`}</td>
         <td style="text-align:right">
+          <button class="sm ghost" data-prof="${x.id}">${t("targets.bom")}</button>
           ${x.authorized?"":`<button class="sm ghost" data-auth="${x.id}">${t("common.authorize")}</button>`}
           <button class="sm danger" data-del="${x.id}">${t("common.delete")}</button></td></tr>`).join("")}
       </tbody></table>`: `<div class="empty">${t("targets.empty")}</div>`}
@@ -229,6 +230,35 @@ async function viewTargets() {
   main().querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{
     await api("/targets/"+b.dataset.del,{method:"DELETE"}); viewTargets(); });
   main().querySelectorAll("[data-auth]").forEach(b=>b.onclick=()=>authorizeForm(b.dataset.auth));
+  main().querySelectorAll("[data-prof]").forEach(b=>b.onclick=()=>openProfile(b.dataset.prof));
+}
+
+async function openProfile(id){
+  let p; try{ p=await api(`/targets/${id}/profile`); }catch(e){ toast(e.message); return; }
+  const chips=a=>a.length?a.map(s=>`<span class="tag">${esc(s)}</span>`).join(" "):`<span class="no">—</span>`;
+  const sec=(title,body)=>`<div class="lab" style="margin-top:14px">${title}</div>${body}`;
+  const ports=p.ports.length?`<table><thead><tr><th>${t("bom.port")}</th><th>${t("bom.service")}</th>
+      <th>${t("bom.product")}</th></tr></thead><tbody>${p.ports.map(x=>`<tr>
+      <td class="mono">${x.port}/${x.proto}</td><td>${esc(x.service)}</td>
+      <td class="mono" style="font-size:12px">${esc(x.product||"—")}</td></tr>`).join("")}</tbody></table>`
+    :`<span class="no">—</span>`;
+  const comps=p.components.length?`<div class="row" style="gap:6px;flex-wrap:wrap">${p.components.map(c=>
+      `<span class="tag">${esc(c.name)}${c.version?" "+esc(c.version):""}</span>`).join("")}</div>`:`<span class="no">—</span>`;
+  const paths=p.paths.length?`<div class="scrollbox" style="max-height:160px">${p.paths.map(x=>
+      `<div class="mono" style="font-size:12px;padding:2px 0">${esc(x)}</div>`).join("")}</div>`:`<span class="no">—</span>`;
+  const web=p.web_servers.length?chips(p.web_servers):chips(p.powered_by);
+  const sevline=Object.entries(p.findings_by_sev||{}).sort((a,b)=>sevScore(b[0])-sevScore(a[0]))
+      .map(([s,n])=>`<span class="badge sev-${s}">${sevLabel(s)} ${n}</span>`).join(" ")||`<span class="no">—</span>`;
+  openDrawer(`<span class="close-x" onclick="closeDrawer()">×</span>
+    <h2>${esc(p.target.name)} <span class="tag">${p.target.kind}</span></h2>
+    <div class="pb-note">${esc(p.endpoint||"—")} · ${p.runs} ${t("bom.engagements")}${p.last_seen?" · "+fmtDate(p.last_seen):""}</div>
+    ${sec(t("bom.ports"),ports)}
+    ${sec(t("bom.os"),chips(p.os))}
+    ${sec(t("bom.webServer"),web)}
+    ${sec(t("bom.components")+` (${p.components.length})`,comps)}
+    ${sec(t("bom.paths")+` (${p.paths.length})`,paths)}
+    ${sec(t("bom.endpoints"),chips(p.endpoints))}
+    ${sec(t("bom.findings"),sevline)}`);
 }
 
 function targetForm() {
@@ -422,8 +452,9 @@ function renderRun(d){
     ${report?playbookPanel(t("run.execSummary"),report):""}`;
   $("#back-runs").onclick=()=>show("runs");
   if(live) $("#stop").onclick=async()=>{ await api(`/runs/${r.id}/stop`,{method:"POST"}); toast(t("common.stop")+"…"); };
-  AttackGraph.render($("#graph"), {attempts:steps, targetLabel:"Target", targetName:"",
-    resistedLabel:t("result.clean")}, openAttempt);
+  AttackGraph.render($("#graph"), {attempts:steps, targetName:t("monitor.target"),
+    phaseLabel:(k)=>phaseLabel(k), stepsLabel:t("col.steps")},
+    (grp)=>openAttempt(grp.find(a=>a.success)||grp[0]));
   main().querySelectorAll("[data-att]").forEach(tr=>tr.onclick=()=>{
     openAttempt(d.attempts.find(a=>a.id==tr.dataset.att)); });
   main().querySelectorAll("[data-find]").forEach(c=>c.onclick=()=>{
@@ -541,8 +572,10 @@ function renderMonitor(d, cmap, tmap){
         <div class="feed">${feedHtml(events)}</div></div>
     </div>`;
   $("#mon-open").onclick=()=>openRun(r.id);
-  AttackGraph.render($("#mon-graph"), {attempts, targetLabel:"Target", targetName:tgt.name||"",
-    resistedLabel:t("result.clean")}, openAttempt);
+  AttackGraph.render($("#mon-graph"), {attempts:attempts.filter(a=>!["plan","report","validate"].includes(a.phase)),
+    targetName:tgt.name||t("monitor.target"),
+    endpoint:tgt.endpoint||"", phaseLabel:(k)=>phaseLabel(k), stepsLabel:t("col.steps")},
+    (grp)=>openAttempt(grp.find(a=>a.success)||grp[0]));
 }
 function sparkline(vals){
   if(!vals.length) return `<div class="no" style="font-size:12px;padding:16px 0">${t("monitor.waiting")}</div>`;

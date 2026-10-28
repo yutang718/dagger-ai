@@ -169,10 +169,9 @@ tr:hover td{background:var(--panel2)}
 .scen .sm{margin-top:7px;display:flex;gap:4px;flex-wrap:wrap}
 
 /* attack graph */
-#graph,#mon-graph{width:100%;height:420px;background:
+#graph,#mon-graph{width:100%;min-height:150px;background:
   radial-gradient(circle at 20% 20%,color-mix(in srgb,var(--accent) 10%,transparent),transparent 60%),var(--graph-bg);
   border:1px solid var(--line);border-radius:12px;overflow:hidden}
-#mon-graph{height:300px}
 .gnode{cursor:pointer}
 .gnode text{font-family:var(--mono);font-size:11px;fill:var(--ink)}
 .gnode text.sub{fill:var(--muted)}
