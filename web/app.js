@@ -456,7 +456,8 @@ function renderRun(d){
   $("#back-runs").onclick=()=>show("runs");
   if(live) $("#stop").onclick=async()=>{ await api(`/runs/${r.id}/stop`,{method:"POST"}); toast(t("common.stop")+"…"); };
   AttackGraph.render($("#graph"), {attempts:steps, targetName:t("monitor.target"),
-    phaseLabel:(k)=>phaseLabel(k), stepsLabel:t("col.steps")},
+    phaseLabel:(k)=>phaseLabel(k), techLabel:(x)=>techLabel(x),
+    findingLabel:t("result.finding"), cleanLabel:t("result.clean"), emptyLabel:t("run.noAttempts")},
     (grp)=>openAttempt(grp.find(a=>a.success)||grp[0]));
   main().querySelectorAll("[data-att]").forEach(tr=>tr.onclick=()=>{
     openAttempt(d.attempts.find(a=>a.id==tr.dataset.att)); });
@@ -581,7 +582,8 @@ function renderMonitor(d, cmap, tmap){
     </div>`;
   $("#mon-open").onclick=()=>openRun(r.id);
   AttackGraph.render($("#mon-graph"), {attempts, targetName:tgt.name||t("monitor.target"),
-    endpoint:tgt.endpoint||"", phaseLabel:(k)=>phaseLabel(k), stepsLabel:t("col.steps")},
+    endpoint:tgt.endpoint||"", phaseLabel:(k)=>phaseLabel(k), techLabel:(x)=>techLabel(x),
+    findingLabel:t("result.finding"), cleanLabel:t("result.clean"), emptyLabel:t("run.noAttempts")},
     (grp)=>openAttempt(grp.find(a=>a.success)||grp[0]));
 }
 function sparkline(vals){
