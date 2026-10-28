@@ -490,7 +490,7 @@ def gitsecrets(target, options=None, timeout=300):
 
 
 # tools whose binary name differs from the registry key
-BINARIES = {"testssl": "testssl.sh", "gitsecrets": "git-dumper"}
+BINARIES = {"testssl": "testssl", "gitsecrets": "git-dumper"}
 
 REGISTRY = {
     "nmap": nmap, "httpx": httpx, "nuclei": nuclei, "ffuf": ffuf,
