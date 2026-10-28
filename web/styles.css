@@ -175,6 +175,10 @@ tr:hover td{background:var(--panel2)}
 .gnode{cursor:pointer}
 .gnode text{font-family:var(--mono);font-size:11px;fill:var(--ink)}
 .gnode text.sub{fill:var(--muted)}
+.gnode .glabel{font-family:var(--sans);fill:var(--ink)}
+.gnode .gsub{fill:var(--muted)}
+.gnode circle{transition:.12s}
+.gnode:hover circle{filter:brightness(1.12)}
 .gedge{stroke:var(--edge);stroke-width:1.6;fill:none}
 .gedge.ok{stroke:var(--crit);stroke-width:2.4}
 
