@@ -16,10 +16,11 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import auth, config, taxonomy
+from . import auth, config, taxonomy, tools_client
 from .db import get_session, init_db
 from .engine import start_run, stop_run
 from .models import Attempt, Campaign, Finding, Run, Step, Target
+from .operator import MODULE_META, MODULES
 from .orchestrators import STRATEGIES
 from .probes import all_probes
 
@@ -86,6 +87,11 @@ def meta(_: str = auth.auth_dep):
             for p in all_probes()
         ],
         "strategies": STRATEGIES,
+        "pentest_modules": [
+            {"id": mid, "name": MODULE_META[mid][0], "tool": MODULE_META[mid][1],
+             "phase": MODULES[mid][0]}
+            for mid in MODULES
+        ],
         "owasp_llm": taxonomy.OWASP_LLM_2025,
         "owasp_web": taxonomy.OWASP_WEB_2021,
         "mitre": taxonomy.MITRE,
@@ -102,6 +108,7 @@ def _target_json(t: Target):
         "id": t.id, "name": t.name, "kind": t.kind, "endpoint": t.endpoint,
         "http_method": t.http_method, "headers": t.headers, "body_template": t.body_template,
         "response_path": t.response_path, "authorized": t.authorized,
+        "allow_internal": bool(t.allow_internal),
         "authorization_note": t.authorization_note,
         "created_at": t.created_at.isoformat() if t.created_at else None,
     }
@@ -144,6 +151,25 @@ def create_demo_web(_: str = auth.auth_dep, db: Session = Depends(get_session)):
     )
     db.add(t); db.commit()
     return _target_json(t)
+
+
+@app.post("/api/targets/demo_host")
+def create_demo_host(_: str = auth.auth_dep, db: Session = Depends(get_session)):
+    """Register the bundled web app as a HOST target for a full AI pentest."""
+    t = Target(
+        name="Demo Host — AI pentest (bundled, isolated)",
+        kind="host", endpoint=config.DEMO_WEB_URL,
+        authorized=True, allow_internal=True,
+        authorization_note="Bundled isolated lab host shipped with Dagger-AI for safe demonstration.",
+    )
+    db.add(t); db.commit()
+    return _target_json(t)
+
+
+@app.get("/api/tools/status")
+def tools_status(_: str = auth.auth_dep):
+    """Which pentest binaries are installed in the tool-runner right now."""
+    return {"runner_url": config.TOOL_RUNNER_URL, "tools": tools_client.available()}
 
 
 @app.post("/api/targets/{tid}/authorize")
@@ -236,8 +262,9 @@ def run_detail(rid: int, _: str = auth.auth_dep, db: Session = Depends(get_sessi
     for a in attempts:
         steps = db.scalars(select(Step).where(Step.attempt_id == a.id).order_by(Step.idx)).all()
         out_attempts.append({
-            "id": a.id, "probe": a.probe, "technique": a.technique, "owasp": a.owasp,
-            "atlas": a.atlas, "severity": a.severity, "success": a.success, "score": a.score,
+            "id": a.id, "probe": a.probe, "technique": a.technique, "phase": a.phase or "",
+            "owasp": a.owasp, "atlas": a.atlas, "severity": a.severity, "success": a.success,
+            "score": a.score,
             "objective": a.objective, "rationale": a.rationale, "evidence": a.evidence,
             "steps": [{"idx": s.idx, "role": s.role, "prompt": s.prompt, "response": s.response,
                        "note": s.note, "latency_ms": s.latency_ms} for s in steps],

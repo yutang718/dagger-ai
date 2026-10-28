@@ -1,17 +1,24 @@
 # 🗡️ Dagger-AI
 
-**An LLM-driven AI red-teaming platform for authorized testing of AI systems.**
-Point it at a chatbot, an LLM API, a tool-enabled agent, **or a web application**
-**you own or are permitted to assess**, and Dagger-AI runs structured adversarial
-campaigns across **two attack surfaces**:
+**An AI-driven penetration-testing platform that orchestrates the world's best
+security tools.** Point it at a host, a web app, an API, or an LLM system **you
+own or are permitted to assess**, and an AI operator plans and runs a staged
+engagement — driving real tools, interpreting their output, chaining findings,
+and showing every step with PoC evidence in a visual console.
 
-- **AI / LLM** — prompt injection, jailbreaks, system-prompt leakage, data
-  exfiltration, agent tool-abuse (→ shell) · *OWASP LLM Top 10 + MITRE ATLAS*
-- **Web apps** — SQLi, command injection, SSRF, XSS, IDOR, default creds,
-  misconfig, version disclosure · *OWASP Top 10 (2021) + MITRE ATT&CK*
+**Three attack surfaces, one platform:**
 
-…then shows you every step, the PoC evidence, and how to fix it, in a visual
-console. Self-hosted, one command, no API key required.
+- **🎯 Host / web app — AI pentest** *(headline)*: the AI operator runs a real
+  toolchain — **nmap · httpx · nuclei · ffuf · whatweb · sqlmap** plus built-in
+  OWASP web probes — across recon → fingerprint → discovery → vuln-scan →
+  exploit. Findings map to *OWASP Top 10 + MITRE ATT&CK* with CVE references.
+- **🌐 Web apps**: built-in DAST probes — SQLi, command injection, SSRF, XSS,
+  IDOR, default creds, misconfig, version disclosure · *OWASP 2021 + ATT&CK*.
+- **🤖 AI / LLM**: prompt injection, jailbreaks, system-prompt leakage, data
+  exfiltration, agent tool-abuse (→ shell) · *OWASP LLM Top 10 + MITRE ATLAS*.
+
+Self-hosted, one command. Works with **no API key** (offline operator +
+built-in probes); plug in an LLM to make the operator plan adaptively.
 
 > ⚖️ **Authorized use only.** Dagger-AI is a defensive security tool. Only run
 > campaigns against AI systems you own or have explicit written permission to
@@ -41,9 +48,25 @@ can watch a full exploit chain — up to **command execution / shell** — safel
 
 ## Features
 
-- **Structured attack campaigns** — pick probes + an orchestration strategy
-  against one target.
-- **Two probe families** covering both attack surfaces:
+- **AI pentest engagements (host targets)** — an AI *operator* plans and runs a
+  staged assessment, driving best-of-breed tools through an isolated sidecar and
+  distilling PoC-validated findings:
+
+  | Phase | Tool(s) | Purpose |
+  |---|---|---|
+  | Recon | **nmap** | ports & service/version detection |
+  | Fingerprint | **httpx**, **whatweb** | tech stack, titles, banners |
+  | Discovery | **ffuf** | hidden paths / content (sensitive files) |
+  | Vuln scan | **nuclei** | templated CVE/misconfig detection |
+  | Exploit | **sqlmap**, built-in web probes | validate SQLi + OWASP issues |
+
+  The operator writes the plan + executive summary (LLM when configured, else a
+  deterministic playbook), runs within a step budget, and degrades gracefully if
+  a tool isn't installed. Tools execute in an isolated Kali sidecar, never in the
+  app.
+
+- **Structured attack campaigns** — pick modules/probes against one target.
+- **Two built-in probe families** (also usable standalone):
 
   **AI / LLM probes** — OWASP LLM Top 10 (2025) + MITRE ATLAS:
   - `prompt_injection` — direct instruction override (LLM01 · AML.T0051)
@@ -89,19 +112,24 @@ cd dagger-ai
 Open **http://localhost:8099** → sign in with `admin` / `Admin@12345`
 (change these in `.env`).
 
-### Try full exploit chains safely (2 minutes)
+### Try it safely (bundled, isolated, pre-authorized lab targets)
 
-The platform ships **two** isolated, pre-authorized lab targets:
+**A) AI pentest (headline)** — **Targets →** *Demo host (AI pentest)* →
+**Campaigns →** pick it (the pentest modules appear automatically) → **Run**.
+Watch the operator work through the phases; when the tool-runner has finished
+building, nmap/nuclei/ffuf run for real against the lab host, and the built-in
+probes confirm **critical SQLi, command injection, and SSRF** — each with the
+command/output trail and OWASP + MITRE ATT&CK mapping, plus an AI summary.
 
-**A) LLM agent** — **Targets →** *Demo LLM agent* → **Campaigns →** pick it,
-select all AI probes (incl. `agent_tool_abuse`), **Run**. Click the red
-`agent_tool_abuse` node → the prompt-injection drove the agent's shell tool to
-run `id` / `cat /flag.txt`; the `DAGGER-FLAG{…}` trophy is proof of RCE.
+**B) Web app** — *Demo web app* → campaign → **Run** → 8 OWASP findings.
 
-**B) Web app** — **Targets →** *Demo web app* → **Campaigns →** pick it
-(the web probes appear automatically), **Run**. You'll get 8 findings incl.
-**critical SQLi, command injection (`uid=…`), and SSRF to cloud-metadata
-creds** — each with the request/response trail and MITRE ATT&CK mapping.
+**C) LLM agent** — *Demo LLM agent* → campaign (incl. `agent_tool_abuse`) →
+**Run** → prompt-injection drives the agent's shell tool to `cat /flag.txt`
+(`DAGGER-FLAG{…}` trophy = proof of RCE).
+
+> First `./dagger start` builds the Kali tool-runner (nmap/nuclei/…), which
+> takes several minutes. Until it's up, AI pentest still runs using the built-in
+> web probes; the dashboard's "Pentest tool-runner" panel shows which tools are live.
 
 ### Test your own AI system
 
@@ -147,22 +175,26 @@ Data (SQLite + snapshots) lives in `./data` via a bind mount, so rebuilds and
 ## Architecture
 
 ```
-┌────────────── dagger-net (bridge) ───────────────────┐
-│  dagger-ai  :8099                                     │
-│   FastAPI + SQLite + static console (web/)            │
-│   engine → (orchestrators→LLM probes | web probes)    │
-│         │  (your authorized external targets) ────────┼──▶ internet
-│         ▼                                              │
-├──────── dagger-lab (internal, NO internet) ───────────┤
-│  vulnerable-target  :9009  (weak LLM agent)           │
-│  vulnerable-webapp  :9010  (weak OWASP web app)       │
-└───────────────────────────────────────────────────────┘
+┌────────────── dagger-net (bridge) ───────────────────────────┐
+│  dagger-ai  :8099   FastAPI + SQLite + console (web/)         │
+│    engine ─ host target ─▶ operator ─▶ tool-runner ──────────┐│
+│           ─ web target  ─▶ web probes                        ││
+│           ─ llm target  ─▶ orchestrators → LLM probes        ││
+│  tool-runner :9020 (Kali: nmap/nuclei/httpx/ffuf/whatweb/sqlmap)──▶ internet
+│         │  (your authorized external targets) ───────────────┼┼──▶ internet
+│         ▼                                                     ││
+├──────── dagger-lab (internal, NO internet) ──────────────────┼┘
+│  vulnerable-target :9009 (weak LLM agent)                     │
+│  vulnerable-webapp :9010 (weak OWASP web app = demo host)     │
+└───────────────────────────────────────────────────────────────┘
 ```
 
-- `core/probes/builtin.py` — LLM attack modules · `core/probes/web.py` — web attack modules
+- `core/operator.py` — AI pentest operator: plans phases, drives tools, distills findings
+- `tool_runner/` — isolated Kali sidecar exposing nmap/nuclei/httpx/ffuf/whatweb/sqlmap
+- `core/tools_client.py` — app → tool-runner client (graceful when a tool/runner is down)
+- `core/probes/web.py` — built-in OWASP web probes · `core/probes/builtin.py` — LLM probes
 - `core/orchestrators/` — single-turn / crescendo / tree-of-attacks (LLM probes)
 - `core/engine.py` — runs campaigns, persists attempts+steps, distills findings
-- `core/judge.py` — LLM or heuristic success scoring (evidence required)
 - `core/taxonomy.py` — OWASP LLM/Web + MITRE ATLAS/ATT&CK maps
 - `web/` — zero-dependency console (SVG attack graph, no CDN)
 - `vulnerable_target/` · `vulnerable_webapp/` — bundled lab targets for safe demos

@@ -95,3 +95,55 @@ def test_security_misconfiguration_detected():
 
 def test_version_banner_detected():
     assert _run("vulnerable_components")[0].success
+
+
+# --- AI pentest operator (tool orchestration) --------------------------------
+from core import operator, tools_client                    # noqa: E402
+from core.llm_client import LLMClient                       # noqa: E402
+
+
+def test_operator_modules_consistent():
+    # every module maps to a phase in PHASE_ORDER and has display metadata
+    for mid, (phase, tool) in operator.MODULES.items():
+        assert phase in operator.PHASE_ORDER
+        assert mid in operator.MODULE_META
+
+
+def test_operator_offline_flow_with_canned_tools(monkeypatch):
+    # Pretend the tool-runner returns a nuclei finding + nmap observations.
+    def fake_run(tool, target, options=None, allow_internal=False):
+        if tool == "nuclei":
+            return {"tool": "nuclei", "available": True, "command": "nuclei ...",
+                    "stdout": "", "observations": [],
+                    "findings": [{"title": "Exposed .git", "severity": "high", "owasp": "A05",
+                                  "mitre": "T1595.002", "evidence": "/.git/HEAD",
+                                  "description": "d", "remediation": "r"}],
+                    "duration_ms": 10}
+        if tool == "nmap":
+            return {"tool": "nmap", "available": True, "command": "nmap ...", "stdout": "",
+                    "observations": ["80/tcp open — http"], "findings": [], "duration_ms": 5}
+        return {"tool": tool, "available": False, "command": tool, "stdout": "",
+                "observations": [], "findings": [], "duration_ms": 0, "error": "n/a"}
+
+    monkeypatch.setattr(tools_client, "run", fake_run)
+    offline = LLMClient("offline", "", "", "")
+    attempts = operator.run_engagement("http://127.0.0.1:9999",
+                                       ["recon_nmap", "vuln_nuclei"], False, 12, offline)
+    phases = [a.phase for a in attempts]
+    assert "plan" in phases and "report" in phases        # AI operator brackets
+    allf = [f for a in attempts for f in a.findings]
+    assert any(f["title"] == "Exposed .git" for f in allf)
+    # the nmap attempt carries an observation step but no finding
+    nmap_a = next(a for a in attempts if a.technique.startswith("Nmap"))
+    assert not nmap_a.findings and "80/tcp" in nmap_a.steps[0].response
+
+
+def test_operator_handles_missing_runner(monkeypatch):
+    # runner unreachable -> tool attempts marked unavailable, no crash
+    monkeypatch.setattr(tools_client, "run", lambda *a, **k: {
+        "tool": "nuclei", "available": False, "command": "nuclei", "stdout": "",
+        "observations": [], "findings": [], "error": "runner unreachable", "duration_ms": 0})
+    offline = LLMClient("offline", "", "", "")
+    attempts = operator.run_engagement("http://127.0.0.1:9999", ["vuln_nuclei"], False, 12, offline)
+    tool_attempts = [a for a in attempts if a.phase == "vuln"]
+    assert tool_attempts and not tool_attempts[0].success

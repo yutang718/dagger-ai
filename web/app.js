@@ -55,6 +55,7 @@ function show(view) {
 /* ---------- dashboard ---------- */
 async function viewDashboard() {
   const d = await api("/dashboard");
+  let tools = null; try { tools = await api("/tools/status"); } catch {}
   const sev = d.severity_totals;
   main().innerHTML = `
     <h1>Dashboard</h1><p class="lead">Posture across all red-team runs, mapped to OWASP LLM Top 10 (2025).</p>
@@ -70,8 +71,18 @@ async function viewDashboard() {
       <div class="panel"><h3>OWASP LLM Top 10 (2025)</h3>${owaspBars(d.owasp_llm_hits,d.owasp_llm_labels)}</div>
       <div class="panel"><h3>OWASP Web Top 10 (2021)</h3>${owaspBars(d.owasp_web_hits,d.owasp_web_labels)}</div>
     </div>
+    <div class="panel"><h3>Pentest tool-runner</h3>${toolStatus(tools)}</div>
     <div class="panel"><h3>Recent runs</h3>${runsTable(d.recent_runs)}</div>`;
   bindRunRows();
+}
+function toolStatus(t){
+  if(!t || !t.tools || !Object.keys(t.tools).length)
+    return `<div class="no" style="font-size:13px">Tool-runner not reachable yet (it builds on first
+      <span class="mono">./dagger start</span>). AI pentest will use built-in web probes until tools are up.</div>`;
+  return `<div class="row" style="gap:8px;flex-wrap:wrap">`+Object.entries(t.tools).map(([k,v])=>
+    `<span class="tag" style="border-color:${v?'var(--ok)':'var(--line)'};color:${v?'var(--ok)':'var(--muted)'}">`
+    + (v?'✔':'✗') + ` ${k}</span>`).join("")+`</div>
+    <p class="no" style="font-size:12px;margin-top:8px">Installed binaries in the isolated tool-runner container.</p>`;
 }
 function domainSplit(d){
   const llm=Object.values(d.owasp_llm_hits).reduce((a,b)=>a+b,0);
@@ -122,8 +133,9 @@ async function viewTargets() {
   const ts = await api("/targets");
   main().innerHTML = `
     <div class="spread"><div><h1>Targets</h1><p class="lead">AI systems under test.</p></div>
-      <div class="row"><button class="ghost" id="add-demo">+ Demo LLM agent</button>
+      <div class="row"><button class="ghost" id="add-demo-host">+ Demo host (AI pentest)</button>
       <button class="ghost" id="add-demo-web">+ Demo web app</button>
+      <button class="ghost" id="add-demo">+ Demo LLM agent</button>
       <button id="add-target">+ New target</button></div></div>
     <div class="warn">⚖ Only run campaigns against systems you own or are explicitly authorized to test.
       ${S.meta.require_authorization ? "Each target must carry an authorization note before it can be attacked." : ""}</div>
@@ -141,6 +153,8 @@ async function viewTargets() {
     toast("Demo LLM agent registered (isolated lab target)"); viewTargets(); };
   $("#add-demo-web").onclick = async () => { await api("/targets/demo_web",{method:"POST"});
     toast("Demo web app registered (isolated lab target)"); viewTargets(); };
+  $("#add-demo-host").onclick = async () => { await api("/targets/demo_host",{method:"POST"});
+    toast("Demo host registered — run an AI pentest engagement"); viewTargets(); };
   $("#add-target").onclick = targetForm;
   main().querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{
     await api("/targets/"+b.dataset.del,{method:"DELETE"}); viewTargets(); });
@@ -151,12 +165,13 @@ function targetForm() {
   openDrawer(`<h2>New target</h2>
     <label>Type</label>
     <select id="t-kind">
-      <option value="http_chat">LLM / chat endpoint (AI probes)</option>
-      <option value="web_app">Web application (OWASP web probes)</option>
+      <option value="host">Host / web app — AI pentest (nmap·nuclei·ffuf·sqlmap…)</option>
+      <option value="web_app">Web application (built-in OWASP web probes)</option>
+      <option value="http_chat">LLM / chat endpoint (AI/LLM probes)</option>
     </select>
     <label>Name</label><input id="t-name" placeholder="My app (staging)">
-    <label id="ep-lab">Endpoint URL</label>
-    <input id="t-ep" placeholder="https://host/v1/chat/completions">
+    <label id="ep-lab">Target host or URL</label>
+    <input id="t-ep" placeholder="example.com  or  https://app.example.com">
     <div id="chat-fields">
       <label>HTTP method</label><input id="t-method" value="POST">
       <label>Request body template <span class="no">(use {{PROMPT}})</span></label>
@@ -166,18 +181,20 @@ function targetForm() {
     </div>
     <div class="row" style="margin-top:18px"><button id="t-save">Create</button>
       <button class="ghost" onclick="closeDrawer()">Cancel</button></div>`);
-  const sync=()=>{ const web=$("#t-kind").value==="web_app";
-    $("#chat-fields").style.display=web?"none":"block";
-    $("#ep-lab").textContent=web?"Base URL (e.g. https://app.example.com)":"Endpoint URL";
-    $("#t-ep").placeholder=web?"https://app.example.com":"https://host/v1/chat/completions"; };
+  const sync=()=>{ const k=$("#t-kind").value; const chat=k==="http_chat";
+    $("#chat-fields").style.display=chat?"block":"none";
+    $("#ep-lab").textContent = k==="host" ? "Target host or URL"
+      : k==="web_app" ? "Base URL" : "Endpoint URL";
+    $("#t-ep").placeholder = k==="host" ? "example.com  or  https://app.example.com"
+      : k==="web_app" ? "https://app.example.com" : "https://host/v1/chat/completions"; };
   $("#t-kind").onchange=sync; sync();
   $("#t-save").onclick = async () => {
-    const web=$("#t-kind").value==="web_app";
+    const chat=$("#t-kind").value==="http_chat";
     try{ await api("/targets",{method:"POST",body:JSON.stringify({
       name:$("#t-name").value, kind:$("#t-kind").value, endpoint:$("#t-ep").value,
-      http_method: web?"GET":$("#t-method").value,
-      body_template: web?"":$("#t-body").value,
-      response_path: web?"":$("#t-path").value })});
+      http_method: chat?$("#t-method").value:"GET",
+      body_template: chat?$("#t-body").value:"",
+      response_path: chat?$("#t-path").value:"" })});
       closeDrawer(); viewTargets(); toast("Target created"); }
     catch(e){ toast(e.message); }
   };
@@ -237,28 +254,42 @@ function campaignForm(ts){
   const renderProbes=()=>{
     const opt=$("#c-target").selectedOptions[0];
     const kind=opt?opt.dataset.kind:"http_chat";
-    const cat = kind==="web_app" ? "web" : "llm";
-    $("#probe-domain").textContent = cat==="web"
-      ? "· OWASP Web Top 10 + MITRE ATT&CK" : "· OWASP LLM Top 10 + MITRE ATLAS";
-    $("#strat-wrap").style.display = cat==="web" ? "none" : "block";
-    const list=S.meta.probes.filter(p=>p.category===cat);
-    $("#probe-list").innerHTML = list.map(p=>`
-      <label class="probe" data-p="${p.id}">
-        <input type="checkbox" value="${p.id}" checked>
-        <div><div class="pn">${esc(p.name)} <span class="badge sev-${p.severity}">${p.severity}</span>
-          <span class="tag">${p.owasp}</span> <span class="tag">${p.mitre}</span></div>
-        <div class="pd">${esc(p.description)}${p.requires_tools?" · needs a tool-enabled target":""}</div></div>
-      </label>`).join("");
+    let html="";
+    if(kind==="host"){
+      $("#probe-domain").textContent="· AI pentest — real tools (nmap · nuclei · ffuf · httpx · sqlmap)";
+      $("#strat-wrap").style.display="none";
+      html=(S.meta.pentest_modules||[]).map(m=>`
+        <label class="probe" data-p="${m.id}">
+          <input type="checkbox" value="${m.id}" checked>
+          <div><div class="pn">${esc(m.name)}
+            <span class="tag">${m.phase}</span> <span class="tag">${m.tool}</span></div></div>
+        </label>`).join("");
+    } else {
+      const cat = kind==="web_app" ? "web" : "llm";
+      $("#probe-domain").textContent = cat==="web"
+        ? "· OWASP Web Top 10 + MITRE ATT&CK" : "· OWASP LLM Top 10 + MITRE ATLAS";
+      $("#strat-wrap").style.display = cat==="web" ? "none" : "block";
+      html=S.meta.probes.filter(p=>p.category===cat).map(p=>`
+        <label class="probe" data-p="${p.id}">
+          <input type="checkbox" value="${p.id}" checked>
+          <div><div class="pn">${esc(p.name)} <span class="badge sev-${p.severity}">${p.severity}</span>
+            <span class="tag">${p.owasp}</span> <span class="tag">${p.mitre}</span></div>
+          <div class="pd">${esc(p.description)}${p.requires_tools?" · needs a tool-enabled target":""}</div></div>
+        </label>`).join("");
+    }
+    $("#probe-list").innerHTML=html;
     $("#probe-list").querySelectorAll(".probe").forEach(p=>{ const cb=p.querySelector("input");
       const s=()=>p.classList.toggle("on",cb.checked); cb.onchange=s; s(); });
   };
   $("#c-target").onchange=renderProbes; renderProbes();
   $("#c-save").onclick = async () => {
     const chosen=[...$("#probe-list").querySelectorAll("input:checked")].map(i=>i.value);
-    if(!chosen.length){ toast("Pick at least one probe"); return; }
+    if(!chosen.length){ toast("Pick at least one module"); return; }
+    const kind=($("#c-target").selectedOptions[0]||{}).dataset?.kind;
     try{ await api("/campaigns",{method:"POST",body:JSON.stringify({
       name:$("#c-name").value||"Untitled", target_id:+$("#c-target").value, probes:chosen,
-      orchestrator:$("#c-strat").value, max_turns:+($("#c-turns").value||4) })});
+      orchestrator:$("#c-strat").value,
+      max_turns: kind==="host" ? 12 : +($("#c-turns").value||4) })});
       closeDrawer(); viewCampaigns(); toast("Campaign created"); }
     catch(e){ toast(e.message); }
   };
@@ -331,13 +362,16 @@ function findingsList(fs){
 }
 function attemptsTable(as){
   if(!as.length) return `<div class="empty">No attempts recorded yet…</div>`;
-  return `<table><thead><tr><th>Probe</th><th>Technique</th><th>OWASP</th><th>Result</th>
-    <th>Score</th><th>Steps</th></tr></thead><tbody>
+  const hasPhase = as.some(a=>a.phase);
+  return `<table><thead><tr>${hasPhase?'<th>Phase</th>':''}<th>Technique</th><th>OWASP</th>
+    <th>MITRE</th><th>Result</th><th>Steps</th></tr></thead><tbody>
     ${as.map(a=>`<tr data-att="${a.id}" style="cursor:pointer">
-      <td>${esc(a.probe)}</td><td class="mono" style="font-size:12px">${esc(a.technique)}</td>
-      <td><span class="tag">${a.owasp}</span></td>
-      <td>${a.success?`<span class="badge sev-${a.severity}">exploited</span>`:`<span class="no">resisted</span>`}</td>
-      <td>${(a.score*10).toFixed(1)}</td><td>${a.steps.length}</td></tr>`).join("")}
+      ${hasPhase?`<td><span class="tag">${esc(a.phase||'–')}</span></td>`:''}
+      <td class="mono" style="font-size:12px">${esc(a.technique)}</td>
+      <td>${a.owasp?`<span class="tag">${a.owasp}</span>`:'–'}</td>
+      <td>${a.atlas?`<span class="tag">${a.atlas}</span>`:'–'}</td>
+      <td>${a.success?`<span class="badge sev-${a.severity}">finding</span>`:`<span class="no">clean</span>`}</td>
+      <td>${a.steps.length}</td></tr>`).join("")}
     </tbody></table>`;
 }
 

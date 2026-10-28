@@ -22,3 +22,9 @@ class AttemptRec:
     score: float = 0.0
     evidence: str = ""
     rationale: str = ""
+    # Pentest tool runs can yield several findings at once; when set, the engine
+    # persists these (each {title,severity,owasp,mitre,description,evidence,
+    # remediation}) instead of deriving a single finding from probe metadata.
+    findings: list = field(default_factory=list)
+    # Optional kill-chain phase label (recon / fingerprint / discovery / vuln / exploit).
+    phase: str = ""

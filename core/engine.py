@@ -48,52 +48,50 @@ def _execute(run_id: int) -> None:
         tclient = TargetClient(target)
         http = httpx.Client(timeout=config.REQUEST_TIMEOUT, follow_redirects=True,
                             headers={"User-Agent": "Dagger-AI/1.0"})
-        counts = {"attempts": 0, "success": 0}
-        sev_counts = {s: 0 for s in taxonomy.SEVERITY_ORDER}
+        ctx = {"attempts": 0, "success": 0,
+               "sev": {s: 0 for s in taxonomy.SEVERITY_ORDER}}
 
-        for probe_id in (campaign.probes or []):
-            if run_id not in _RUNNING:
-                run.status = "stopped"
-                break
-            probe = get_probe(probe_id)
-            if not probe:
-                continue
-            if probe.category == "web":
-                try:
-                    attempts = probe.execute(target.endpoint or "", http)
-                except Exception as e:
-                    from .records import AttemptRec, StepRec
-                    attempts = [AttemptRec(probe.id, probe.objective,
-                                [StepRec("request", "(web probe)", f"[probe error] {e}", "")],
-                                False, 0.0, "", f"probe error: {e}")]
-            else:
-                attempts = orchestrate(campaign.orchestrator, probe, tclient, attacker,
-                                       campaign.max_turns or 6)
+        if target.kind == "host":
+            # AI pentest engagement: the operator drives real tools + web probes.
+            from . import operator
+            attempts = operator.run_engagement(
+                target.endpoint or "", campaign.probes or list(operator.MODULES),
+                bool(target.allow_internal),
+                min(campaign.max_turns or config.MAX_TOOL_STEPS, config.MAX_TOOL_STEPS),
+                attacker.client)
             for a in attempts:
-                counts["attempts"] += 1
-                sev = probe.severity if a.success else "info"
-                row = Attempt(
-                    run_id=run_id, probe=probe.id, technique=a.technique,
-                    owasp=probe.owasp, atlas=probe.mitre, severity=sev,
-                    success=a.success, score=a.score, objective=a.objective,
-                    rationale=a.rationale, evidence=a.evidence,
-                )
-                db.add(row)
-                db.flush()
-                for i, s in enumerate(a.steps):
-                    db.add(Step(attempt_id=row.id, idx=i, role=s.role, prompt=s.prompt,
-                                response=s.response, note=s.note, latency_ms=s.latency_ms))
-                if a.success:
-                    counts["success"] += 1
-                    sev_counts[probe.severity] = sev_counts.get(probe.severity, 0) + 1
-                    db.add(_finding(run_id, row.id, probe, a))
+                if run_id not in _RUNNING:
+                    run.status = "stopped"; break
+                _persist(db, run_id, a, None, ctx)
                 db.commit()
+        else:
+            for probe_id in (campaign.probes or []):
+                if run_id not in _RUNNING:
+                    run.status = "stopped"
+                    break
+                probe = get_probe(probe_id)
+                if not probe:
+                    continue
+                if probe.category == "web":
+                    try:
+                        attempts = probe.execute(target.endpoint or "", http)
+                    except Exception as e:
+                        from .records import AttemptRec, StepRec
+                        attempts = [AttemptRec(probe.id, probe.objective,
+                                    [StepRec("request", "(web probe)", f"[probe error] {e}", "")],
+                                    False, 0.0, "", f"probe error: {e}")]
+                else:
+                    attempts = orchestrate(campaign.orchestrator, probe, tclient, attacker,
+                                           campaign.max_turns or 6)
+                for a in attempts:
+                    _persist(db, run_id, a, probe, ctx)
+                    db.commit()
 
         run.summary = {
-            "attempts": counts["attempts"],
-            "successes": counts["success"],
-            "severity": sev_counts,
-            "worst": taxonomy.worst([s for s, n in sev_counts.items() if n]),
+            "attempts": ctx["attempts"],
+            "successes": ctx["success"],
+            "severity": ctx["sev"],
+            "worst": taxonomy.worst([s for s, n in ctx["sev"].items() if n]),
         }
         if run.status != "stopped":
             run.status = "done"
@@ -114,6 +112,49 @@ def _execute(run_id: int) -> None:
         except Exception:
             pass
         db.close()
+
+
+def _persist(db, run_id, a, probe, ctx):
+    """Persist one AttemptRec: its steps, and either its explicit findings list
+    (pentest tools) or a probe-derived finding (LLM/web probes)."""
+    ctx["attempts"] += 1
+    # Determine attempt severity + taxonomy.
+    if a.findings:
+        sev = taxonomy.worst([f.get("severity", "info") for f in a.findings])
+        owasp = a.findings[0].get("owasp", "")
+        mitre = a.findings[0].get("mitre", "")
+    elif a.success and probe is not None:
+        sev, owasp, mitre = probe.severity, probe.owasp, probe.mitre
+    else:
+        sev = "info"
+        owasp = probe.owasp if probe else ""
+        mitre = probe.mitre if probe else ""
+    row = Attempt(
+        run_id=run_id, probe=(probe.id if probe else a.technique), technique=a.technique,
+        phase=getattr(a, "phase", ""), owasp=owasp, atlas=mitre, severity=sev,
+        success=a.success, score=a.score, objective=a.objective,
+        rationale=a.rationale, evidence=a.evidence,
+    )
+    db.add(row); db.flush()
+    for i, s in enumerate(a.steps):
+        db.add(Step(attempt_id=row.id, idx=i, role=s.role, prompt=s.prompt,
+                    response=s.response, note=s.note, latency_ms=s.latency_ms))
+    # Findings
+    if a.findings:
+        for f in a.findings:
+            fs = f.get("severity", "info")
+            db.add(Finding(
+                run_id=run_id, attempt_id=row.id,
+                title=f.get("title", "finding"), severity=fs,
+                owasp=f.get("owasp", ""), atlas=f.get("mitre", ""),
+                description=f.get("description", ""), evidence=f.get("evidence", ""),
+                remediation=f.get("remediation", "")))
+            ctx["success"] += 1
+            ctx["sev"][fs] = ctx["sev"].get(fs, 0) + 1
+    elif a.success and probe is not None:
+        db.add(_finding(run_id, row.id, probe, a))
+        ctx["success"] += 1
+        ctx["sev"][probe.severity] = ctx["sev"].get(probe.severity, 0) + 1
 
 
 def _finding(run_id, attempt_id, probe, a) -> Finding:

@@ -50,10 +50,30 @@ def snapshot(tag: str = "startup") -> None:
         old.unlink(missing_ok=True)
 
 
+# Additive columns introduced after the first schema; added in place so existing
+# databases upgrade without a rebuild (mirrors the auto-column approach we use
+# elsewhere). {table: [(column, DDL type + default)]}.
+_ADDITIVE = {
+    "targets": [("allow_internal", "BOOLEAN DEFAULT 0")],
+    "attempts": [("phase", "VARCHAR(30) DEFAULT ''")],
+}
+
+
+def _migrate(conn):
+    from sqlalchemy import text
+    for table, cols in _ADDITIVE.items():
+        existing = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
+        for name, ddl in cols:
+            if name not in existing:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+
+
 def init_db() -> None:
     from . import models  # noqa: F401  (register mappers)
     snapshot("startup")
     Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        _migrate(conn)
 
 
 def get_session():

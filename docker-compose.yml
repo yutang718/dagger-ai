@@ -19,6 +19,9 @@ services:
       DAGGER_ATTACKER_MODEL: ${DAGGER_ATTACKER_MODEL:-}
       DAGGER_DEMO_TARGET_URL: http://vulnerable-target:9009/chat
       DAGGER_DEMO_WEB_URL: http://vulnerable-webapp:9010
+      DAGGER_DEMO_HOST: vulnerable-webapp
+      DAGGER_TOOL_RUNNER_URL: http://tool-runner:9020
+      DAGGER_TOOL_RUNNER_TOKEN: ${DAGGER_TOOL_RUNNER_TOKEN:-dagger-local-runner}
     volumes:
       - ./data:/data
     networks:
@@ -27,6 +30,25 @@ services:
     depends_on:
       - vulnerable-target
       - vulnerable-webapp
+
+  # AI pentest tool-runner: best-of-breed tools (nmap/nuclei/httpx/ffuf/whatweb/
+  # sqlmap) on Kali, driven by the operator. Needs internet (templates + your
+  # authorized external targets); isolated from the vulnerable demo containers'
+  # no-internet network except to reach the demo host for the bundled engagement.
+  tool-runner:
+    build: ./tool_runner
+    image: dagger-ai-tool-runner:1.0
+    container_name: dagger-tool-runner
+    restart: unless-stopped
+    environment:
+      TOOL_RUNNER_TOKEN: ${DAGGER_TOOL_RUNNER_TOKEN:-dagger-local-runner}
+    networks:
+      - dagger-net     # internet: nuclei templates + authorized external targets
+      - dagger-lab     # reach the bundled demo host
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
+    pids_limit: 512
 
   # INTENTIONALLY VULNERABLE demo agent. Lab only.
   # No published host ports; attached ONLY to the internal (no-internet) lab network.

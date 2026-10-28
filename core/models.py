@@ -37,6 +37,8 @@ class Target(Base):
     # safety gate
     authorized = Column(Boolean, default=False)
     authorization_note = Column(Text, default="")
+    # host engagements only: permit link-local/loopback targets (bundled lab).
+    allow_internal = Column(Boolean, default=False)
     created_at = Column(DateTime, default=_now)
 
     campaigns = relationship("Campaign", back_populates="target", cascade="all, delete-orphan")
@@ -77,6 +79,7 @@ class Attempt(Base):
     run_id = Column(Integer, ForeignKey("runs.id", ondelete="CASCADE"))
     probe = Column(String(80))
     technique = Column(String(120))
+    phase = Column(String(30), default="")   # kill-chain phase (pentest engagements)
     owasp = Column(String(20), default="")
     atlas = Column(String(40), default="")
     severity = Column(String(20), default="info")
