@@ -16,9 +16,10 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import auth, config, taxonomy, tools_client
+from . import auth, config, settings, taxonomy, tools_client, translations
 from .db import get_session, init_db
 from .engine import start_run, stop_run
+from .llm_client import LLMClient
 from .models import Attempt, Campaign, Finding, Run, Step, Target
 from .operator import MODULE_META, MODULES
 from .orchestrators import STRATEGIES
@@ -77,29 +78,76 @@ def do_login(body: LoginIn):
 
 @app.get("/api/meta")
 def meta(_: str = auth.auth_dep):
+    def _probe(p):
+        zh = translations.PROBE_ZH.get(p.id, (p.name, p.description))
+        return {"id": p.id, "name": p.name, "name_zh": zh[0], "category": p.category,
+                "owasp": p.owasp, "owasp_label": taxonomy.owasp_label(p.owasp), "mitre": p.mitre,
+                "mitre_label": taxonomy.mitre_label(p.mitre), "severity": p.severity,
+                "requires_tools": p.requires_tools, "objective": p.objective,
+                "description": p.description, "description_zh": zh[1]}
+    llm = settings.llm_config_public()
     return {
-        "probes": [
-            {"id": p.id, "name": p.name, "category": p.category, "owasp": p.owasp,
-             "owasp_label": taxonomy.owasp_label(p.owasp), "mitre": p.mitre,
-             "mitre_label": taxonomy.mitre_label(p.mitre), "severity": p.severity,
-             "requires_tools": p.requires_tools, "objective": p.objective,
-             "description": p.description}
-            for p in all_probes()
-        ],
+        "probes": [_probe(p) for p in all_probes()],
         "strategies": STRATEGIES,
+        "strategies_zh": translations.STRATEGY_ZH,
         "pentest_modules": [
-            {"id": mid, "name": MODULE_META[mid][0], "tool": MODULE_META[mid][1],
-             "phase": MODULES[mid][0]}
+            {"id": mid, "name": MODULE_META[mid][0], "name_zh": translations.MODULE_ZH.get(mid, MODULE_META[mid][0]),
+             "tool": MODULE_META[mid][1], "phase": MODULES[mid][0]}
             for mid in MODULES
         ],
+        "phases_zh": translations.PHASE_ZH,
         "owasp_llm": taxonomy.OWASP_LLM_2025,
+        "owasp_llm_zh": translations.OWASP_LLM_ZH,
         "owasp_web": taxonomy.OWASP_WEB_2021,
+        "owasp_web_zh": translations.OWASP_WEB_ZH,
         "mitre": taxonomy.MITRE,
         "severity_color": taxonomy.SEVERITY_COLOR,
+        "severity_zh": translations.SEVERITY_ZH,
         "require_authorization": config.REQUIRE_AUTHORIZATION,
-        "attacker_online": config.ATTACKER_PROVIDER in ("openai", "anthropic"),
+        "attacker_online": llm["online"],
+        "llm": llm,
         "version": config.VERSION,
     }
+
+
+# ----------------------------------------------------------------- settings
+class LLMSettingsIn(BaseModel):
+    provider: str = "offline"       # offline | openai | anthropic
+    base_url: str = ""
+    model: str = ""
+    api_key: str | None = None      # None keeps the stored key; "" clears it
+
+
+@app.get("/api/settings/llm")
+def get_llm_settings(_: str = auth.auth_dep):
+    return settings.llm_config_public()
+
+
+@app.put("/api/settings/llm")
+def put_llm_settings(body: LLMSettingsIn, _: str = auth.auth_dep):
+    try:
+        return settings.set_llm_config(body.provider, body.base_url, body.model, body.api_key)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/settings/llm/test")
+def test_llm_settings(_: str = auth.auth_dep):
+    """Probe the configured attacker/judge LLM with a tiny completion so the
+    operator gets immediate feedback that their endpoint/key works."""
+    import time
+    client = LLMClient.attacker()
+    if not client.online:
+        return {"ok": False, "online": False,
+                "detail": "No online provider configured — using the offline engine."}
+    t0 = time.time()
+    out = client.complete("You are a connectivity check.",
+                          "Reply with the single word: PONG", temperature=0.0)
+    ms = int((time.time() - t0) * 1000)
+    ok = bool(out.strip())
+    return {"ok": ok, "online": True, "latency_ms": ms,
+            "model": client.model or "(provider default)", "sample": (out or "")[:120],
+            "detail": "Response received." if ok else "No response — check base URL / key / model."}
 
 
 # ----------------------------------------------------------------- targets

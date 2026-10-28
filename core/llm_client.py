@@ -28,8 +28,11 @@ class LLMClient:
 
     @classmethod
     def attacker(cls) -> "LLMClient":
-        return cls(config.ATTACKER_PROVIDER, config.ATTACKER_BASE_URL,
-                   config.ATTACKER_API_KEY, config.ATTACKER_MODEL)
+        # Runtime console config (Settings page) takes precedence over the env
+        # defaults so the operator can bring/switch their own LLM live.
+        from . import settings
+        cfg = settings.llm_config()
+        return cls(cfg["provider"], cfg["base_url"], cfg["api_key"], cfg["model"])
 
     @property
     def online(self) -> bool:

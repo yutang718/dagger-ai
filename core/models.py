@@ -110,6 +110,16 @@ class Step(Base):
     attempt = relationship("Attempt", back_populates="steps")
 
 
+class Setting(Base):
+    """Key/value store for runtime configuration the operator can change from
+    the console (e.g. the attacker/judge LLM). Overrides the env defaults in
+    config.py when present. Single-tenant, self-hosted tool — one row per key."""
+    __tablename__ = "settings"
+    key = Column(String(80), primary_key=True)
+    value = Column(JSON, default=dict)
+    updated_at = Column(DateTime, default=_now, onupdate=_now)
+
+
 class Finding(Base):
     __tablename__ = "findings"
     id = Column(Integer, primary_key=True)
