@@ -168,31 +168,32 @@ tr:hover td{background:var(--panel2)}
 .scen .sn{font-weight:700;font-size:13px} .scen .sd{color:var(--muted);font-size:11px;margin-top:3px;line-height:1.4}
 .scen .sm{margin-top:7px;display:flex;gap:4px;flex-wrap:wrap}
 
-/* attack graph */
+/* attack kill-chain — vertical timeline (no horizontal overflow) */
 #graph,#mon-graph{width:100%;background:
-  radial-gradient(circle at 20% 20%,color-mix(in srgb,var(--accent) 9%,transparent),transparent 60%),var(--graph-bg);
-  border:1px solid var(--line);border-radius:12px;overflow-x:auto;padding:14px}
-
-/* attack kill-chain flow: phase columns of status-coloured action cards */
-.chain{display:flex;align-items:stretch;gap:0;min-width:min-content}
-.chain-col{flex:0 0 auto;min-width:122px;max-width:168px;display:flex;flex-direction:column}
-.chain-target{justify-content:center;min-width:144px}
-.ct-card{background:var(--node-target);border:1.5px solid var(--accent);border-radius:11px;padding:11px;text-align:center}
-.ct-ic{font-size:20px;color:var(--accent);line-height:1}
-.ct-name{font-weight:700;font-size:12px;margin-top:4px;word-break:break-word}
-.ct-ep{font-size:10px;color:var(--muted);margin-top:3px;word-break:break-all}
-.chain-sep{display:flex;align-items:center;color:var(--muted);font-size:20px;padding:0 5px;align-self:center;flex:0 0 auto}
-.chain-head{display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:11px;font-weight:700;
-  text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:0 2px 7px;
-  border-bottom:2px solid var(--line);margin-bottom:9px}
-.chain-acts{display:flex;flex-direction:column;gap:7px}
+  radial-gradient(circle at 20% 10%,color-mix(in srgb,var(--accent) 8%,transparent),transparent 55%),var(--graph-bg);
+  border:1px solid var(--line);border-radius:12px;overflow:hidden;padding:16px 16px 6px}
+.vchain{display:flex;flex-direction:column}
+.vrow{display:flex;align-items:stretch}
+.vrail{width:30px;flex:none;display:flex;justify-content:center;position:relative}
+.vrail::before{content:"";position:absolute;top:0;bottom:0;width:2px;background:var(--line)}
+.vrow:first-child .vrail::before{top:11px}
+.vrow:last-child .vrail::before{bottom:calc(100% - 11px)}
+.vdot{width:13px;height:13px;border-radius:50%;margin-top:4px;flex:none;position:relative;z-index:1;
+  box-shadow:0 0 0 3px var(--graph-bg)}
+.vbody{flex:1;min-width:0;padding:0 0 16px 12px}
+.vhead{display:flex;align-items:center;gap:9px;font-size:12px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.04em;color:var(--ink);margin-bottom:9px;min-height:21px}
+.vhead.vtarget{text-transform:none;color:var(--accent)}
+.vhead .vep{color:var(--muted);font-size:11px;font-weight:400;text-transform:none;word-break:break-all}
+.vcount{color:var(--muted)}
+.vacts{display:flex;flex-wrap:wrap;gap:8px}
 .chain-act{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:9px;
-  padding:7px 9px;background:var(--panel);cursor:pointer;transition:.12s}
-.chain-act:hover{filter:brightness(1.06)}
+  padding:7px 10px;background:var(--panel);cursor:pointer;transition:.12s;min-width:150px;max-width:240px}
+.chain-act:hover{filter:brightness(1.06);border-color:var(--accent)}
 .chain-act.ok{background:var(--panel2)}
 .cdot{width:8px;height:8px;border-radius:50%;flex:none}
 .cact-body{display:flex;flex-direction:column;min-width:0}
-.cact-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
+.cact-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cact-st{font-size:10px;text-transform:uppercase;letter-spacing:.03em}
 .chain-empty{color:var(--muted);text-align:center;padding:28px}
 .gnode{cursor:pointer}

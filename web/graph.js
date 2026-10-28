@@ -1,11 +1,10 @@
-/* Attack kill-chain flow (self-contained, offline, theme-aware).
+/* Attack kill-chain (self-contained, offline, theme-aware).
 
-   Renders the engagement as a left-to-right flow of PHASE columns, each holding
-   the ACTION cards run in that phase, each card coloured by its STATUS
-   (a finding in its severity colour, or clean/neutral). So at a glance you see:
-   which phase → what actions it ran → the outcome of each. Click a card to open
-   its step-by-step trail. Built as HTML (not SVG) so it reflows, themes via CSS
-   variables, and stays legible with any number of actions. */
+   A VERTICAL timeline: Target at the top, then each phase as a full-width row —
+   a dot on a connecting rail, the phase name + finding count, and the ACTION
+   cards for that phase wrapping across the available width (each coloured by its
+   STATUS). Flows top→bottom so nothing runs off the right edge; it uses the full
+   width and grows downward. Click a card to open its step trail. */
 (function (global) {
   const PHASE_SEQ = ["plan", "recon", "fingerprint", "discovery", "vuln", "exploit", "validate", "report"];
   const SEV = {critical:"var(--crit)", high:"var(--high)", medium:"var(--med)",
@@ -24,37 +23,40 @@
       const ia = PHASE_SEQ.indexOf(a), ib = PHASE_SEQ.indexOf(b);
       return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
     });
-
     if (!keys.length) { container.innerHTML = `<div class="chain-empty">${esc(data.emptyLabel || "—")}</div>`; return; }
 
-    let html = `<div class="chain">`;
-    // target node
-    html += `<div class="chain-col chain-target"><div class="ct-card">
-        <div class="ct-ic">◎</div><div class="ct-name">${esc(data.targetName || "Target")}</div>
-        ${data.endpoint ? `<div class="ct-ep mono">${esc(data.endpoint)}</div>` : ""}</div></div>`;
+    const row = (dotColor, headHtml, actsHtml) => `
+      <div class="vrow">
+        <div class="vrail"><span class="vdot" style="background:${dotColor}"></span></div>
+        <div class="vbody">${headHtml}${actsHtml || ""}</div>
+      </div>`;
+
+    let html = `<div class="vchain">`;
+    // target
+    html += row("var(--accent)",
+      `<div class="vhead vtarget">◎ <b>${esc(data.targetName || "Target")}</b>
+        ${data.endpoint ? `<span class="vep mono">${esc(data.endpoint)}</span>` : ""}</div>`, "");
 
     keys.forEach(k => {
       const items = groups[k];
       const hits = items.filter(a => a.success).length;
-      html += `<div class="chain-sep">›</div>`;
-      html += `<div class="chain-col">
-          <div class="chain-head"><span>${esc(pl(k))}</span>
-            <span class="ch-count">${hits
-              ? `<b style="color:var(--crit)">${hits}⚑</b>`
-              : `<span class="no">${items.length}</span>`}</span></div>
-          <div class="chain-acts">`;
-      items.forEach(a => {
+      const worst = items.reduce((w, a) => (a.success && _sev(a.severity) > _sev(w)) ? a.severity : w, "info");
+      const dot = hits ? (SEV[worst] || SEV.info) : "var(--line)";
+      const head = `<div class="vhead"><span>${esc(pl(k))}</span>
+        <span class="vcount">${hits ? `<b style="color:var(--crit)">${hits}⚑</b>`
+                                    : `<span class="no">${items.length}</span>`}</span></div>`;
+      const acts = `<div class="vacts">` + items.map(a => {
         const col = a.success ? (SEV[a.severity] || SEV.info) : "var(--line)";
-        const dot = a.success ? (SEV[a.severity] || SEV.info) : "var(--muted)";
+        const cdot = a.success ? (SEV[a.severity] || SEV.info) : "var(--muted)";
         const st = a.success ? (data.findingLabel || "finding") : (data.cleanLabel || "clean");
-        html += `<div class="chain-act${a.success ? " ok" : ""}" data-att="${a.id}"
+        return `<div class="chain-act${a.success ? " ok" : ""}" data-att="${a.id}"
             style="border-color:${col}" title="${esc(tl(a.technique))}">
-            <span class="cdot" style="background:${dot}"></span>
+            <span class="cdot" style="background:${cdot}"></span>
             <span class="cact-body"><span class="cact-name">${esc(tl(a.technique))}</span>
               <span class="cact-st" style="color:${a.success ? col : "var(--muted)"}">${esc(st)}</span></span>
           </div>`;
-      });
-      html += `</div></div>`;
+      }).join("") + `</div>`;
+      html += row(dot, head, acts);
     });
     html += `</div>`;
     container.innerHTML = html;
@@ -63,6 +65,7 @@
       if (a && onNode) onNode([a], a.phase);
     });
   }
+  const _sev = s => ({critical:5, high:4, medium:3, low:2, info:1}[s] || 0);
 
   global.AttackGraph = { render };
 })(window);
