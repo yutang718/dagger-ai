@@ -1,0 +1,59 @@
+# Dagger-AI — PRODUCTION / cloud stack (standalone, NOT an override).
+#
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Differences from the local stack:
+#   * NO bundled vulnerable demo targets — they must never be reachable in prod.
+#   * The console is NOT published directly; only Caddy is, on 80/443, and it
+#     terminates automatic HTTPS (Let's Encrypt) in front of the app.
+#   * Set DAGGER_DOMAIN + strong secrets in .env before starting.
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: dagger-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DAGGER_DOMAIN: ${DAGGER_DOMAIN:?set DAGGER_DOMAIN in .env (e.g. dagger.example.com)}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - edge
+    depends_on:
+      - dagger
+
+  dagger:
+    build: .
+    image: dagger-ai:1.0
+    container_name: dagger-ai
+    restart: unless-stopped
+    # No host port — only Caddy reaches it over the internal 'edge' network.
+    expose:
+      - "8000"
+    environment:
+      DAGGER_ADMIN_USER: ${DAGGER_ADMIN_USER:?set a non-default admin user}
+      DAGGER_ADMIN_PASSWORD: ${DAGGER_ADMIN_PASSWORD:?set a strong admin password}
+      DAGGER_SECRET_KEY: ${DAGGER_SECRET_KEY:?set a long random secret key}
+      DAGGER_TOKEN_HOURS: ${DAGGER_TOKEN_HOURS:-8}
+      DAGGER_REQUIRE_AUTHORIZATION: ${DAGGER_REQUIRE_AUTHORIZATION:-true}
+      DAGGER_ATTACKER_PROVIDER: ${DAGGER_ATTACKER_PROVIDER:-offline}
+      DAGGER_ATTACKER_BASE_URL: ${DAGGER_ATTACKER_BASE_URL:-}
+      DAGGER_ATTACKER_API_KEY: ${DAGGER_ATTACKER_API_KEY:-}
+      DAGGER_ATTACKER_MODEL: ${DAGGER_ATTACKER_MODEL:-}
+      # Demo targets are intentionally NOT deployed in prod; leave these unset.
+    volumes:
+      - ./data:/data
+    networks:
+      - edge
+
+networks:
+  edge:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

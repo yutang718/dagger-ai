@@ -1,0 +1,24 @@
+# Automatic HTTPS (Let's Encrypt) in front of the Dagger-AI console.
+# DAGGER_DOMAIN must be a real domain whose DNS A/AAAA record points at this
+# server, with ports 80 and 443 reachable. Caddy obtains + renews the cert.
+{$DAGGER_DOMAIN} {
+	encode zstd gzip
+
+	# Security headers the app itself does not set.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	reverse_proxy dagger:8000
+}
+
+# No-domain fallback: serve on the server IP over Caddy's internal self-signed
+# cert. Replace the block above with this if you have no domain yet.
+# :443 {
+# 	tls internal
+# 	reverse_proxy dagger:8000
+# }

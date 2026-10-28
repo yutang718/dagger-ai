@@ -169,6 +169,21 @@ Data (SQLite + snapshots) lives in `./data` via a bind mount, so rebuilds and
 
 ---
 
+## Cloud deployment
+
+Dagger-AI runs on any cloud that runs containers. See **[DEPLOY.md](DEPLOY.md)**
+for the full guide. The short version (one VM with Docker + a domain):
+
+```bash
+git clone https://github.com/yutang718/dagger-ai && cd dagger-ai
+cp .env.prod.example .env && nano .env    # set DAGGER_DOMAIN + strong secrets
+./dagger prod                             # console + automatic HTTPS, NO demo targets
+```
+
+> The production stack (`docker-compose.prod.yml`) **excludes the vulnerable
+> demo targets** and serves the console over HTTPS only. Never expose the demo
+> targets to a network you don't fully control.
+
 ## Responsible use
 
 Dagger-AI assesses AI systems for weaknesses so they can be fixed. Do not use

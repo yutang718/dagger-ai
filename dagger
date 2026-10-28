@@ -19,6 +19,9 @@ Usage: ./dagger <command>
   logs [n]     Tail logs (default 80 lines)
   status       Show container + health status
   reset        Stop and DELETE all data in ./data  (asks to confirm)
+
+  prod         Start the PRODUCTION stack (console + HTTPS proxy, no demo
+               targets). Needs .env with DAGGER_DOMAIN + secrets. See DEPLOY.md
 U
 }
 
@@ -40,8 +43,15 @@ reset(){
   docker compose down; rm -rf ./data; ok "Reset complete."
 }
 
+prod(){
+  [ -f .env ] || { err "No .env found. Copy .env.prod.example to .env and set DAGGER_DOMAIN + secrets first (see DEPLOY.md)."; exit 1; }
+  docker compose -f docker-compose.prod.yml up -d --build
+  ok "Production stack up. Open https://\${DAGGER_DOMAIN} once DNS + certs settle."
+  info "Demo targets are intentionally NOT started in prod."
+}
+
 case "${1:-}" in
   start) start;; stop) stop;; restart) restart;; rebuild) rebuild;;
-  logs) shift; logs "$@";; status) status;; reset) reset;;
+  logs) shift; logs "$@";; status) status;; reset) reset;; prod) prod;;
   *) usage;;
 esac
