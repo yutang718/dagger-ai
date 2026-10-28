@@ -20,11 +20,13 @@ from . import config
 
 
 class LLMClient:
-    def __init__(self, provider: str, base_url: str, api_key: str, model: str):
+    def __init__(self, provider: str, base_url: str, api_key: str, model: str,
+                 api_version: str = ""):
         self.provider = provider
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
+        self.api_version = (api_version or "").strip()  # Azure only
         self.last_error = ""   # populated on a failed complete() for diagnostics
 
     @classmethod
@@ -33,7 +35,8 @@ class LLMClient:
         # defaults so the operator can bring/switch their own LLM live.
         from . import settings
         cfg = settings.llm_config()
-        return cls(cfg["provider"], cfg["base_url"], cfg["api_key"], cfg["model"])
+        return cls(cfg["provider"], cfg["base_url"], cfg["api_key"], cfg["model"],
+                   cfg.get("api_version", ""))
 
     @property
     def online(self) -> bool:
@@ -92,7 +95,9 @@ class LLMClient:
     def _azure(self, system: str, user: str, temperature: float) -> str:
         from urllib.parse import urlsplit, parse_qs
         base = self.base_url
-        ver = (parse_qs(urlsplit(base).query).get("api-version") or [None])[0] \
+        # Precedence: the explicit api-version field, then one in the URL, then default.
+        ver = self.api_version \
+            or (parse_qs(urlsplit(base).query).get("api-version") or [None])[0] \
             or self._AZURE_API_VERSION
         if "/chat/completions" in base:          # user pasted the full deployment URL
             url = base

@@ -112,10 +112,11 @@ def meta(_: str = auth.auth_dep):
 
 # ----------------------------------------------------------------- settings
 class LLMSettingsIn(BaseModel):
-    provider: str = "offline"       # offline | openai | anthropic
+    provider: str = "offline"       # offline | openai | azure | anthropic
     base_url: str = ""
     model: str = ""
     api_key: str | None = None      # None keeps the stored key; "" clears it
+    api_version: str = ""           # Azure only
 
 
 @app.get("/api/settings/llm")
@@ -126,7 +127,8 @@ def get_llm_settings(_: str = auth.auth_dep):
 @app.put("/api/settings/llm")
 def put_llm_settings(body: LLMSettingsIn, _: str = auth.auth_dep):
     try:
-        return settings.set_llm_config(body.provider, body.base_url, body.model, body.api_key)
+        return settings.set_llm_config(body.provider, body.base_url, body.model,
+                                        body.api_key, body.api_version)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

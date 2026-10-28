@@ -519,6 +519,11 @@ async function viewSettings(){
           <label>${t("settings.model")}</label>
           <input id="s-model" value="${esc(cfg.model||"")}" placeholder="gpt-4o-mini">
           <div class="no" style="font-size:11px;margin-top:3px">${t("settings.modelHint")}</div>
+          <div id="s-apiver-wrap" style="display:none">
+            <label>${t("settings.apiVersion")}</label>
+            <input id="s-apiver" value="${esc(cfg.api_version||"")}" placeholder="2024-10-21">
+            <div class="no" style="font-size:11px;margin-top:3px">${t("settings.apiVersionHint")}</div>
+          </div>
           <label>${t("settings.apiKey")} <span class="no">· ${cfg.has_api_key?t("settings.apiKeySet"):t("settings.apiKeyNone")}</span></label>
           <input id="s-key" type="password" placeholder="${cfg.has_api_key?"••••••••••":"sk-…"}">
           <div class="no" style="font-size:11px;margin-top:3px">${t("settings.apiKeyHint")}</div>
@@ -539,11 +544,13 @@ async function viewSettings(){
   const syncProv=()=>{ const v=$("#s-prov").value, off=v==="offline";
     $("#s-online").style.display=off?"none":"block";
     $("#s-azure-note").style.display=v==="azure"?"block":"none";
+    $("#s-apiver-wrap").style.display=v==="azure"?"block":"none";
     paintStatus(!off && (cfg.has_api_key||$("#s-base").value)); };
   $("#s-prov").onchange=syncProv; syncProv();
   $("#s-save").onclick=async()=>{
     const body={provider:$("#s-prov").value, base_url:$("#s-base")?$("#s-base").value:"",
-      model:$("#s-model")?$("#s-model").value:""};
+      model:$("#s-model")?$("#s-model").value:"",
+      api_version:$("#s-apiver")?$("#s-apiver").value:""};
     const k=$("#s-key")?$("#s-key").value:""; if(k) body.api_key=k;
     try{ const res=await api("/settings/llm",{method:"PUT",body:JSON.stringify(body)});
       S.meta.llm=res; refreshAttackerPill(); paintStatus(res.online);

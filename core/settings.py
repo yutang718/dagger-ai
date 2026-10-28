@@ -53,6 +53,7 @@ def llm_config() -> dict[str, Any]:
         "base_url": config.ATTACKER_BASE_URL,
         "api_key": config.ATTACKER_API_KEY,
         "model": config.ATTACKER_MODEL,
+        "api_version": config.ATTACKER_API_VERSION,
     }
     cfg.update({k: v for k, v in stored.items() if k in cfg and v is not None})
     cfg["source"] = "console" if stored else "environment"
@@ -69,7 +70,7 @@ def llm_config_public() -> dict[str, Any]:
 
 
 def set_llm_config(provider: str, base_url: str, model: str,
-                   api_key: str | None) -> dict[str, Any]:
+                   api_key: str | None, api_version: str = "") -> dict[str, Any]:
     """Persist an LLM config change. `api_key=None` keeps the existing key;
     an empty string clears it. Returns the public (redacted) config."""
     if provider not in _ALLOWED_PROVIDERS:
@@ -78,6 +79,7 @@ def set_llm_config(provider: str, base_url: str, model: str,
     stored["provider"] = provider
     stored["base_url"] = (base_url or "").strip()
     stored["model"] = (model or "").strip()
+    stored["api_version"] = (api_version or "").strip()
     if api_key is not None:
         stored["api_key"] = api_key.strip()
     _put(LLM_KEY, stored)
