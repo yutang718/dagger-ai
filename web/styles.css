@@ -277,3 +277,7 @@ tr:hover td{background:var(--panel2)}
   border:1px solid color-mix(in srgb,var(--accent2) 45%,transparent)}
 .kind.tool{color:var(--muted);background:var(--panel2);border:1px solid var(--line)}
 .kind .kic{flex:none}
+
+/* LLM plain-language conclusion of a tool step */
+.conclusion{background:color-mix(in srgb,var(--accent2) 8%,var(--panel2));border:1px solid var(--line);
+  border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.65;white-space:pre-wrap;word-break:break-word}

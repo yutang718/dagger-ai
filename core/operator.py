@@ -243,9 +243,33 @@ def _validate(client, host, attempts) -> str:
     return client.complete(_VAL_SYS, f"Host: {host}\nFindings:\n{brief}").strip()
 
 
-def _run_module(mod, url, host, allow_internal, reason):
-    """Run one module, tagging each resulting attempt with the LLM's reasoning so
-    the spectator view shows WHY it was chosen."""
+_INTERP_SYS = (
+    "You are a penetration tester explaining ONE tool's result to a teammate in plain language. "
+    "In 1-2 short sentences, say what this step found and what it means for the target's security "
+    "(or that it found nothing notable). No preamble, no raw output, no markdown, no bullet points.")
+
+
+def _interpret(client, mod, res) -> str:
+    """Ask the LLM for a short, human-readable conclusion of one tool's output,
+    so the operator doesn't just dump raw nmap/nuclei/ffuf text at the user."""
+    if not (client and client.online):
+        return ""
+    name = MODULE_META.get(mod, (mod, mod))[0]
+    findings = res.get("findings", []) or []
+    obs = res.get("observations", []) or []
+    fbrief = "; ".join(f"{f.get('severity')}: {f.get('title')}" for f in findings[:12]) \
+        or "no confirmed findings"
+    obrief = "\n".join(obs[:20])[:1500]
+    out = client.complete(
+        _INTERP_SYS,
+        f"Tool: {name}\nConfirmed findings: {fbrief}\nObservations:\n{obrief}\n\n"
+        "Explain in plain language what this step found and what it means.")
+    return out.strip()
+
+
+def _run_module(mod, url, host, allow_internal, reason, client=None):
+    """Run one module, attaching the LLM's reasoning for choosing it (as a step
+    note) and a plain-language conclusion of the output (as the rationale)."""
     phase, tool = MODULES[mod]
     out = []
     if tool == "__builtin__":
@@ -257,7 +281,10 @@ def _run_module(mod, url, host, allow_internal, reason):
         a = _attempt_from_tool(mod, phase, res)
         if a.steps and reason:
             a.steps[0].note = f"AI chose this — {reason} · " + a.steps[0].note
-        if reason:
+        concl = _interpret(client, mod, res)
+        if concl:
+            a.rationale = concl
+        elif reason:
             a.rationale = f"Rationale: {reason} | " + (a.rationale or "")
         out = [a]
         hits = len(res.get("findings", []) or [])
@@ -292,7 +319,7 @@ def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
             reason = reason or "next phase in order"
         remaining.discard(mod)
         budget -= 1
-        recs, hits = _run_module(mod, url, host, allow_internal, reason)
+        recs, hits = _run_module(mod, url, host, allow_internal, reason, client)
         for a in recs:
             _emit(attempts, a, on_attempt)
         ran.append((mod, hits))

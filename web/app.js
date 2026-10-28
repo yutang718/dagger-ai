@@ -404,12 +404,15 @@ async function viewRuns(){
 function runsTable(rs){
   if(!rs||!rs.length) return `<div class="empty">${t("runs.empty")}</div>`;
   return `<table><thead><tr><th>${t("col.run")}</th><th>${t("col.status")}</th><th>${t("col.attempts")}</th>
-    <th>${t("col.successes")}</th><th>${t("col.worst")}</th><th>${t("col.started")}</th></tr></thead><tbody>
-    ${rs.map(r=>{const s=r.summary||{};return `<tr data-run="${r.id}" style="cursor:pointer">
+    <th>${t("col.successes")}</th><th>${t("col.worst")}</th><th>${t("col.tokens")}</th><th>${t("col.cost")}</th>
+    <th>${t("col.started")}</th></tr></thead><tbody>
+    ${rs.map(r=>{const s=r.summary||{};const u=s.usage||{};return `<tr data-run="${r.id}" style="cursor:pointer">
       <td><b>#${r.id}</b></td>
       <td><span class="status ${r.status}">${r.status==="running"?'<span class="spin"></span> ':''}${statusLabel(r.status)}</span></td>
       <td>${s.attempts??"—"}</td><td>${s.successes??"—"}</td>
       <td>${s.worst?`<span class="badge sev-${s.worst}">${sevLabel(s.worst)}</span>`:"—"}</td>
+      <td class="mono" style="font-size:12px">${u.total_tokens?u.total_tokens.toLocaleString():"—"}</td>
+      <td>${u.cost_usd?`<span class="ucost">~$${u.cost_usd.toFixed(4)}</span>`:"—"}</td>
       <td class="no">${fmtDate(r.started_at)}</td></tr>`;}).join("")}
     </tbody></table>`;
 }
@@ -485,7 +488,7 @@ function phaseGroups(as){
 }
 function atkRow(a){
   const s0=(a.steps&&a.steps[0])||{};
-  const sub=(s0.prompt||a.rationale||"").slice(0,120);
+  const sub=(a.rationale||s0.prompt||"").slice(0,150);
   return `<div class="atk ${a.success?"ok":""}" data-att="${a.id}">
     <span class="ti"><div class="tn">${kindBadge(a)} ${esc(a.technique)}
       ${a.success?`<span class="badge sev-${a.severity}">${t("result.finding")}</span>`
@@ -593,7 +596,7 @@ function feedHtml(events){
     <div class="fev ${a.success?"ok":""}">
       <div class="fh"><span>${kindBadge(a)} ${esc(a.phase?phaseLabel(a.phase)+" · ":"")}<span class="mono">${esc(a.technique)}</span></span>
         <span>${st.latency_ms||0} ms ${a.success?`· <b style="color:var(--crit)">${t("monitor.exploited")}</b>`:""}</span></div>
-      <div class="fp">${esc((st.response||st.prompt||"").slice(0,180))}</div></div>`).join("");
+      <div class="fp">${esc((a.rationale||st.response||st.prompt||"").slice(0,180))}</div></div>`).join("");
 }
 
 /* ---------- settings (LLM config) ---------- */
@@ -683,7 +686,8 @@ function openAttempt(a){
       ${a.owasp?`<span class="tag">${a.owasp}</span>`:""}${a.atlas?`<span class="tag">${a.atlas}</span>`:""}
       <span class="tag">score ${(a.score*10).toFixed(1)}</span></div>
     <p class="no" style="font-size:13px"><b>${t("attempt.objective")}:</b> ${esc(a.objective)}</p>
-    <p class="no" style="font-size:13px"><b>${t("attempt.judge")}:</b> ${esc(a.rationale)}</p>
+    ${a.rationale?`<div class="lab" style="margin-top:12px">${t("attempt.conclusion")}</div>
+      <div class="conclusion">${esc(a.rationale)}</div>`:""}
     ${a.evidence?`<div class="lab">${t("attempt.evidence")}</div><div class="evidence">${esc(a.evidence)}</div>`:""}
     <h3 style="margin-top:18px">${t("attempt.trail",{n:a.steps.length})}</h3>${steps}`);
 }
