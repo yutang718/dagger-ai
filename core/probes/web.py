@@ -322,6 +322,7 @@ class PHPCGIArgInjection(WebProbe):
     owasp = "A06"
     mitre = "T1190"
     severity = "critical"
+    cves = ("CVE-2024-4577",)
     objective = "Confirm CVE-2024-4577 PHP-CGI argument injection leads to remote code execution."
     description = ("Tests the PHP-CGI argument-injection RCE (CVE-2024-4577): a soft-hyphen (%AD) "
                    "smuggles -d directives that enable auto_prepend_file=php://input, executing a "
@@ -370,6 +371,7 @@ class ApachePathTraversal(WebProbe):
     owasp = "A05"
     mitre = "T1190"
     severity = "critical"
+    cves = ("CVE-2021-41773", "CVE-2021-42013")
     objective = "Confirm Apache path traversal by reading a world-readable system file."
     description = ("Tests the Apache 2.4.49/2.4.50 path-traversal flaw: an encoded ../ sequence under "
                    "an aliased/cgi path escapes the document root to read files outside it.")

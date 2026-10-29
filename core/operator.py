@@ -11,6 +11,7 @@ output as steps and parsed vulnerabilities as findings).
 from __future__ import annotations
 
 import ipaddress
+import re
 from urllib.parse import urlparse
 
 import httpx
@@ -158,6 +159,10 @@ def _playbook_engagement(client, url, host, selected, allow_internal, max_steps,
         res = tools_client.run(tool, tgt, allow_internal=allow_internal)
         _emit(attempts, _attempt_from_tool(mod, phase, res, lang), on_attempt)
 
+    # ---- auto-verify EVERY discovered vuln (not just PHP) ----
+    for a in _exploit_verification(url, attempts, lang):
+        _emit(attempts, a, on_attempt)
+
     # ---- AI executive summary ----
     summary = _summary(client, host, attempts, lang)
     _emit(attempts, AttemptRec("engagement-summary", f"Summarise findings for {host}",
@@ -229,6 +234,102 @@ def _web_probe_attempts(url, lang="en") -> list[AttemptRec]:
                     a.rationale = (f"确认漏洞：{pname}（详见证据）。" if a.success
                                    else f"未发现 {pname} 问题。")
                 out.append(a)
+    finally:
+        http.close()
+    return out
+
+
+_CVE_RE = re.compile(r"CVE-\d{4}-\d{3,7}", re.I)
+
+
+def _discovered_cves(attempts) -> dict:
+    """Every CVE id surfaced so far (from nuclei, banners, any probe finding),
+    mapped to the finding that mentioned it."""
+    found: dict[str, dict] = {}
+    for a in attempts:
+        for f in (getattr(a, "findings", None) or []):
+            blob = " ".join(str(f.get(k, "")) for k in ("title", "evidence", "description"))
+            for cid in _CVE_RE.findall(blob):
+                found.setdefault(cid.upper(), f)
+    return found
+
+
+def _cve_confirmed(attempts, cve) -> bool:
+    """True only if an active probe (hands-on HTTP PoC) already confirmed this
+    CVE — a scanner/tool signature match (role="tool") does not count, since
+    that is exactly what we want to verify."""
+    for a in attempts:
+        if not getattr(a, "success", False):
+            continue
+        roles = {getattr(s, "role", "") for s in (getattr(a, "steps", None) or [])}
+        if "request" not in roles or "tool" in roles:
+            continue  # not a hands-on probe attempt
+        for f in (getattr(a, "findings", None) or []):
+            if cve in (str(f.get("title", "")) + str(f.get("evidence", ""))).upper():
+                return True
+    return False
+
+
+def _exploit_verification(url, attempts, lang="en") -> list[AttemptRec]:
+    """Discovery-driven verification: for EVERY vulnerability discovered (not
+    just PHP), try to actively confirm it. A scanner-flagged CVE with a benign
+    verifier is exercised hands-on; one without is flagged for manual work so
+    nothing is silently taken on a signature alone. All payloads stay benign."""
+    from .probes import base as pbase
+    zh = lang == "zh"
+    cves = _discovered_cves(attempts)
+    if not cves:
+        return []
+    out: list[AttemptRec] = []
+    try:
+        http = httpx.Client(timeout=config.REQUEST_TIMEOUT, follow_redirects=True,
+                            headers={"User-Agent": "Dagger-AI/operator"})
+    except Exception:
+        return out
+    try:
+        for cve, finding in sorted(cves.items()):
+            probe = pbase.verifier_for(cve)
+            obj = (f"验证 {cve} 是否可被利用" if zh else f"Verify whether {cve} is exploitable")
+            if _cve_confirmed(attempts, cve):
+                # Already proven hands-on earlier in this run — record the consolidation.
+                note = (f"{cve} 已通过内置探针主动验证（见上方证据）。" if zh
+                        else f"{cve} already confirmed exploitable by an active probe (evidence above).")
+                out.append(AttemptRec(f"verify:{cve}", obj,
+                                      [StepRec("note", cve, note, "auto-verify")],
+                                      True, 1.0, str(finding.get("evidence", ""))[:200], note,
+                                      phase="exploit"))
+                continue
+            if probe is not None:
+                try:
+                    recs = probe.execute(url, http)
+                except Exception:
+                    recs = []
+                for a in recs:
+                    a.phase = "exploit"
+                    a.technique = f"verify:{cve}"
+                    a.objective = obj
+                    if a.success:
+                        a.findings = [{
+                            "title": probe.name, "severity": probe.severity, "owasp": probe.owasp,
+                            "mitre": probe.mitre, "evidence": a.evidence,
+                            "description": probe.description, "remediation": probe.remediation,
+                        }]
+                        a.rationale = (f"主动验证确认 {cve} 可被利用（良性 PoC，见证据）。" if zh
+                                       else f"Active check confirmed {cve} is exploitable (benign PoC — see evidence).")
+                    else:
+                        a.rationale = (f"主动验证未能复现 {cve}（扫描器告警可能为误报或目标已缓解）。" if zh
+                                       else f"Active check could not reproduce {cve} "
+                                            "(scanner alert may be a false positive, or the target is mitigated).")
+                    out.append(a)
+            else:
+                # Discovered by a scanner but we have no hands-on verifier for it.
+                note = (f"扫描器发现 {cve}，但暂无内置主动验证；已标记需人工确认利用，不仅凭签名下结论。" if zh
+                        else f"{cve} was flagged by a scanner but has no built-in active verifier; "
+                             "flagged for manual exploitation rather than trusted on signature alone.")
+                out.append(AttemptRec(f"verify:{cve}", obj,
+                                      [StepRec("note", cve, note, "auto-verify")],
+                                      False, 0.0, str(finding.get("evidence", ""))[:200], note,
+                                      phase="exploit"))
     finally:
         http.close()
     return out
@@ -414,6 +515,11 @@ def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
         for a in recs:
             _emit(attempts, a, on_attempt)
         ran.append((mod, hits))
+
+    # 2b) AUTO-VERIFY — for EVERY discovered vuln (not just PHP), actively try to
+    #     confirm it with a benign PoC; scanner-only CVEs are flagged for manual work.
+    for a in _exploit_verification(url, attempts, lang):
+        _emit(attempts, a, on_attempt)
 
     # 3) VALIDATE — the LLM reviews the findings (true positives / FPs / priorities).
     val = _validate(client, host, attempts, lang)

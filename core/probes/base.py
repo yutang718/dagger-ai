@@ -25,6 +25,17 @@ def register(cls):
     return cls
 
 
+def verifier_for(cve_id: str):
+    """Return a registered web probe that actively verifies `cve_id` (benign
+    PoC), or None. Lets the operator route a scanner-discovered CVE to a
+    hands-on verification instead of trusting a signature match alone."""
+    cid = (cve_id or "").upper()
+    for p in REGISTRY.values():
+        if cid in {c.upper() for c in getattr(p, "cves", ())}:
+            return p
+    return None
+
+
 @dataclass
 class Seed:
     technique: str
@@ -51,6 +62,7 @@ class Probe:
     objective: str = ""
     description: str = ""
     remediation: str = ""
+    cves: tuple = ()               # CVE ids this probe actively verifies (benign PoC)
 
     # --- LLM probe interface ---
     def seeds(self) -> list[Seed]:

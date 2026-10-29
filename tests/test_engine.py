@@ -147,3 +147,33 @@ def test_operator_handles_missing_runner(monkeypatch):
     attempts = operator.run_engagement("http://127.0.0.1:9999", ["vuln_nuclei"], False, 12, offline)
     tool_attempts = [a for a in attempts if a.phase == "vuln"]
     assert tool_attempts and not tool_attempts[0].success
+
+
+def test_exploit_verification_routes_discovered_cves(monkeypatch):
+    # A nuclei (tool) run flags two CVEs: one we have a benign verifier for,
+    # one we don't. The auto-verify stage must actively re-check the first and
+    # flag the second for manual work — never trust a signature alone.
+    def fake_run(tool, target, allow_internal=False):
+        if tool == "nuclei":
+            return {"tool": "nuclei", "available": True, "command": "nuclei", "stdout": "",
+                    "observations": [], "duration_ms": 5, "error": "",
+                    "findings": [
+                        {"title": "Apache CVE-2021-41773", "severity": "critical", "owasp": "A05",
+                         "mitre": "T1190", "evidence": "CVE-2021-41773 detected",
+                         "description": "", "remediation": ""},
+                        {"title": "Spring4Shell CVE-2022-22965", "severity": "critical", "owasp": "A06",
+                         "mitre": "T1190", "evidence": "CVE-2022-22965", "description": "", "remediation": ""},
+                    ]}
+        return {"tool": tool, "available": False, "command": tool, "stdout": "",
+                "observations": [], "findings": [], "duration_ms": 0, "error": "n/a"}
+
+    monkeypatch.setattr(tools_client, "run", fake_run)
+    offline = LLMClient("offline", "", "", "")
+    attempts = operator.run_engagement("http://127.0.0.1:9999", ["vuln_nuclei"], False, 12, offline)
+    verify = {a.technique: a for a in attempts if a.technique.startswith("verify:")}
+    # both discovered CVEs get an explicit verification attempt
+    assert "verify:CVE-2021-41773" in verify   # has a verifier -> actively re-checked
+    assert "verify:CVE-2022-22965" in verify    # no verifier -> flagged for manual
+    # the unknown CVE is honestly reported as not actively verified
+    assert verify["verify:CVE-2022-22965"].success is False
+    assert verify["verify:CVE-2022-22965"].phase == "exploit"
