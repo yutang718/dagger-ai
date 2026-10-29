@@ -432,6 +432,8 @@ function campaignForm(ts){
     <label>${t("campaignForm.target")}</label><select id="c-target">${topts}</select>
     <div id="strat-wrap"><label>${t("campaignForm.strategy")}</label><select id="c-strat">${strat}</select>
     <label>${t("campaignForm.maxTurns")}</label><input id="c-turns" type="number" value="4" min="1" max="8"></div>
+    <label>${t("campaignForm.cookies")} <span class="no" style="font-weight:400">${t("campaignForm.cookiesHint")}</span></label>
+    <textarea id="c-cookies" rows="3" placeholder="${t("campaignForm.cookiesPh")}" style="font-family:var(--mono);font-size:12px"></textarea>
     <label>${t("campaignForm.probes")} <span id="probe-domain" class="no"></span></label>
     <div id="probe-list" style="display:grid;gap:8px"></div>
     <div class="row" style="margin-top:18px"><button id="c-save">${t("campaignForm.create")}</button>
@@ -472,7 +474,7 @@ function campaignForm(ts){
     const kind=($("#c-target").selectedOptions[0]||{}).dataset?.kind;
     try{ await api("/campaigns",{method:"POST",body:JSON.stringify({
       name:$("#c-name").value||"Untitled", target_id:+$("#c-target").value, probes:chosen,
-      orchestrator:$("#c-strat").value,
+      orchestrator:$("#c-strat").value, session_cookies:$("#c-cookies").value||"",
       max_turns: kind==="host" ? 12 : +($("#c-turns").value||4) })});
       closeDrawer(); viewCampaigns(); toast(t("toast.campaignCreated")); }
     catch(e){ toast(e.message); }

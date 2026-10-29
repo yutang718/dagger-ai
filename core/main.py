@@ -71,6 +71,15 @@ class CampaignIn(BaseModel):
     probes: list[str]
     orchestrator: str = "single_turn"
     max_turns: int = 6
+    session_cookies: str = ""
+
+
+class CampaignPatch(BaseModel):
+    name: str | None = None
+    probes: list[str] | None = None
+    orchestrator: str | None = None
+    max_turns: int | None = None
+    session_cookies: str | None = None
 
 
 # ----------------------------------------------------------------- health/meta
@@ -312,6 +321,7 @@ def delete_target(tid: int, _: str = auth.auth_dep, db: Session = Depends(get_se
 def _campaign_json(c: Campaign):
     return {"id": c.id, "name": c.name, "target_id": c.target_id, "probes": c.probes,
             "orchestrator": c.orchestrator, "max_turns": c.max_turns,
+            "session_cookies": getattr(c, "session_cookies", "") or "",
             "created_at": c.created_at.isoformat() if c.created_at else None}
 
 
@@ -326,8 +336,29 @@ def create_campaign(body: CampaignIn, _: str = auth.auth_dep, db: Session = Depe
         raise HTTPException(404, "target not found")
     turns = max(1, min(body.max_turns, config.MAX_TURNS))
     c = Campaign(name=body.name, target_id=body.target_id, probes=body.probes,
-                 orchestrator=body.orchestrator, max_turns=turns)
+                 orchestrator=body.orchestrator, max_turns=turns,
+                 session_cookies=(body.session_cookies or "")[:8000])
     db.add(c); db.commit()
+    return _campaign_json(c)
+
+
+@app.patch("/api/campaigns/{cid}")
+def update_campaign(cid: int, body: CampaignPatch, _: str = auth.auth_dep,
+                    db: Session = Depends(get_session)):
+    c = db.get(Campaign, cid)
+    if not c:
+        raise HTTPException(404, "campaign not found")
+    if body.name is not None:
+        c.name = body.name
+    if body.probes is not None:
+        c.probes = body.probes
+    if body.orchestrator is not None:
+        c.orchestrator = body.orchestrator
+    if body.max_turns is not None:
+        c.max_turns = max(1, min(body.max_turns, config.MAX_TURNS))
+    if body.session_cookies is not None:
+        c.session_cookies = body.session_cookies[:8000]
+    db.commit()
     return _campaign_json(c)
 
 

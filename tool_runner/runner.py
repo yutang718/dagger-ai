@@ -53,6 +53,7 @@ class RunIn(BaseModel):
     target: str
     options: dict = {}
     allow_internal: bool = False
+    cookies: str = ""        # authenticated testing: Cookie header value
 
 
 def _host(target: str) -> str:
@@ -92,7 +93,10 @@ def run(body: RunIn, x_runner_token: str = Header(default="")):
     host = _host(body.target)
     if _is_internal(host) and not body.allow_internal:
         raise HTTPException(403, "refusing link-local/metadata/loopback target (safety gate)")
-    return fn(body.target, body.options)
+    opts = dict(body.options or {})
+    if body.cookies:
+        opts["cookies"] = body.cookies
+    return fn(body.target, opts)
 
 
 def _auth(token: str):

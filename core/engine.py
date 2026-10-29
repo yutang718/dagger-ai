@@ -49,8 +49,13 @@ def _execute(run_id: int, lang: str = "en") -> None:
         meter = new_meter()
         attacker = AttackerAgent()
         tclient = TargetClient(target)
+        from . import tools_client
+        _ck = tools_client.cookie_header(getattr(campaign, "session_cookies", "") or "")
+        _hdrs = {"User-Agent": "Dagger-AI/1.0"}
+        if _ck:
+            _hdrs["Cookie"] = _ck
         http = httpx.Client(timeout=config.REQUEST_TIMEOUT, follow_redirects=True,
-                            headers={"User-Agent": "Dagger-AI/1.0"})
+                            headers=_hdrs)
         ctx = {"attempts": 0, "success": 0,
                "sev": {s: 0 for s in taxonomy.SEVERITY_ORDER}}
 
@@ -66,7 +71,8 @@ def _execute(run_id: int, lang: str = "en") -> None:
                 bool(target.allow_internal),
                 min(campaign.max_turns or config.MAX_TOOL_STEPS, config.MAX_TOOL_STEPS),
                 attacker.client, on_attempt=_emit_host,
-                cancelled=lambda: run_id not in _RUNNING, lang=lang)
+                cancelled=lambda: run_id not in _RUNNING, lang=lang,
+                cookies=campaign.session_cookies or "")
             if run_id not in _RUNNING:
                 run.status = "stopped"
         else:

@@ -111,7 +111,7 @@ def test_operator_modules_consistent():
 
 def test_operator_offline_flow_with_canned_tools(monkeypatch):
     # Pretend the tool-runner returns a nuclei finding + nmap observations.
-    def fake_run(tool, target, options=None, allow_internal=False):
+    def fake_run(tool, target, options=None, allow_internal=False, cookies=""):
         if tool == "nuclei":
             return {"tool": "nuclei", "available": True, "command": "nuclei ...",
                     "stdout": "", "observations": [],
@@ -153,7 +153,7 @@ def test_exploit_verification_routes_discovered_cves(monkeypatch):
     # A nuclei (tool) run flags two CVEs: one we have a benign verifier for,
     # one we don't. The auto-verify stage must actively re-check the first and
     # flag the second for manual work — never trust a signature alone.
-    def fake_run(tool, target, allow_internal=False):
+    def fake_run(tool, target, allow_internal=False, cookies=""):
         if tool == "nuclei":
             return {"tool": "nuclei", "available": True, "command": "nuclei", "stdout": "",
                     "observations": [], "duration_ms": 5, "error": "",
@@ -177,3 +177,20 @@ def test_exploit_verification_routes_discovered_cves(monkeypatch):
     # the unknown CVE is honestly reported as not actively verified
     assert verify["verify:CVE-2022-22965"].success is False
     assert verify["verify:CVE-2022-22965"].phase == "exploit"
+
+
+def test_campaign_cookies_reach_tools(monkeypatch):
+    # Session cookies set on a campaign must be normalised and passed to every
+    # tool-runner call (authenticated scanning).
+    seen = {}
+
+    def fake_run(tool, target, options=None, allow_internal=False, cookies=""):
+        seen[tool] = cookies
+        return {"tool": tool, "available": True, "command": tool, "stdout": "",
+                "observations": [], "findings": [], "duration_ms": 1, "error": ""}
+
+    monkeypatch.setattr(tools_client, "run", fake_run)
+    offline = LLMClient("offline", "", "", "")
+    operator.run_engagement("http://127.0.0.1:9999", ["vuln_nuclei"], False, 6, offline,
+                            cookies="session=abc\n_gitlab_session=def")
+    assert seen.get("nuclei") == "session=abc; _gitlab_session=def"

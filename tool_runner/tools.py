@@ -28,6 +28,29 @@ def _which(bin_):
     return shutil.which(bin_) is not None
 
 
+def _cookie_args(tool, options):
+    """Extra argv that make `tool` send the campaign's session cookies, so scans
+    run authenticated. Each tool has its own flag; tools without cookie support
+    get nothing."""
+    c = (options or {}).get("cookies", "")
+    if not c:
+        return []
+    hdr = "Cookie: " + c
+    if tool in ("httpx", "nuclei", "ffuf", "katana"):
+        return ["-H", hdr]
+    if tool == "sqlmap":
+        return ["--cookie=" + c]
+    if tool == "dalfox":
+        return ["-C", c]
+    if tool == "arjun":
+        return ["--headers", hdr]
+    if tool == "wpscan":
+        return ["--cookie-string", c]
+    if tool == "whatweb":
+        return ["--cookie", c]
+    return []
+
+
 def _run(cmd, timeout):
     start = time.time()
     try:
@@ -88,7 +111,7 @@ def httpx(target, options=None, timeout=120):
     if not _which("httpx"):
         return _result("httpx", "httpx", available=False)
     cmd = ["httpx", "-u", target, "-json", "-silent", "-title", "-tech-detect",
-           "-status-code", "-web-server", "-no-color"]
+           "-status-code", "-web-server", "-no-color"] + _cookie_args("httpx", options)
     rc, out, ms, err = _run(cmd, timeout)
     obs, findings = [], []
     for line in (out or "").splitlines():
@@ -112,7 +135,7 @@ def nuclei(target, options=None, timeout=600):
     if not _which("nuclei"):
         return _result("nuclei", "nuclei", available=False)
     sev = (options or {}).get("severity", "low,medium,high,critical")
-    cmd = ["nuclei", "-u", target, "-jsonl", "-silent", "-no-color", "-severity", sev]
+    cmd = ["nuclei", "-u", target, "-jsonl", "-silent", "-no-color", "-severity", sev] + _cookie_args("nuclei", options)
     rc, out, ms, err = _run(cmd, timeout)
     findings, obs = [], []
     for line in (out or "").splitlines():
@@ -144,7 +167,7 @@ def ffuf(target, options=None, timeout=240):
     wordlist = (options or {}).get("wordlist", "/usr/share/seclists/Discovery/Web-Content/common.txt")
     base = target.rstrip("/") + "/FUZZ"
     cmd = ["ffuf", "-u", base, "-w", wordlist, "-mc", "200,204,301,302,307,401,403",
-           "-of", "json", "-o", "/dev/stdout", "-s"]
+           "-of", "json", "-o", "/dev/stdout", "-s"] + _cookie_args("ffuf", options)
     rc, out, ms, err = _run(cmd, timeout)
     findings, obs = [], []
     try:
@@ -167,7 +190,7 @@ def ffuf(target, options=None, timeout=240):
 def whatweb(target, options=None, timeout=90):
     if not _which("whatweb"):
         return _result("whatweb", "whatweb", available=False)
-    cmd = ["whatweb", "--log-json=-", "--color=never", target]
+    cmd = ["whatweb", "--log-json=-", "--color=never", target] + _cookie_args("whatweb", options)
     rc, out, ms, err = _run(cmd, timeout)
     findings, obs = [], []
     try:
@@ -193,7 +216,7 @@ def sqlmap(target, options=None, timeout=420):
     if not _which("sqlmap"):
         return _result("sqlmap", "sqlmap", available=False)
     cmd = ["sqlmap", "-u", target, "--batch", "--level", "2", "--risk", "1",
-           "--smart", "--flush-session", "--disable-coloring"]
+           "--smart", "--flush-session", "--disable-coloring"] + _cookie_args("sqlmap", options)
     rc, out, ms, err = _run(cmd, timeout)
     findings = []
     low = (out or "").lower()
@@ -231,7 +254,7 @@ def subfinder(target, options=None, timeout=180):
 def katana(target, options=None, timeout=180):
     if not _which("katana"):
         return _result("katana", "katana", available=False)
-    cmd = ["katana", "-u", target, "-silent", "-d", "2", "-jc", "-nc"]
+    cmd = ["katana", "-u", target, "-silent", "-d", "2", "-jc", "-nc"] + _cookie_args("katana", options)
     rc, out, ms, err = _run(cmd, timeout)
     urls = [l.strip() for l in (out or "").splitlines() if l.strip().startswith("http")]
     return _result("katana", cmd, rc, out, ms, [], urls[:300], error=err)
@@ -296,7 +319,7 @@ def nikto(target, options=None, timeout=300):
 def dalfox(target, options=None, timeout=240):
     if not _which("dalfox"):
         return _result("dalfox", "dalfox", available=False)
-    cmd = ["dalfox", "url", target, "--no-color", "--silence", "--no-spinner"]
+    cmd = ["dalfox", "url", target, "--no-color", "--silence", "--no-spinner"] + _cookie_args("dalfox", options)
     rc, out, ms, err = _run(cmd, timeout)
     findings = []
     for line in (out or "").splitlines():
@@ -358,7 +381,7 @@ def gau(target, options=None, timeout=180):
 def arjun(target, options=None, timeout=180):
     if not _which("arjun"):
         return _result("arjun", "arjun", available=False)
-    cmd = ["arjun", "-u", target, "--stable"]
+    cmd = ["arjun", "-u", target, "--stable"] + _cookie_args("arjun", options)
     rc, out, ms, err = _run(cmd, timeout)
     obs, seen = [], set()
     for line in (out or "").splitlines():
@@ -399,7 +422,7 @@ def wpscan(target, options=None, timeout=360):
     if not _which("wpscan"):
         return _result("wpscan", "wpscan", available=False)
     cmd = ["wpscan", "--url", target, "--no-banner", "--format", "json",
-           "--random-user-agent", "--disable-tls-checks"]
+           "--random-user-agent", "--disable-tls-checks"] + _cookie_args("wpscan", options)
     rc, out, ms, err = _run(cmd, timeout)
     findings = []
     try:

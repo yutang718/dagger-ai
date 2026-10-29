@@ -101,7 +101,7 @@ def _select_for_target(chosen, host):
 
 
 def run_engagement(endpoint, selected, allow_internal, max_steps, client: LLMClient | None = None,
-                   on_attempt=None, cancelled=None, lang="en"):
+                   on_attempt=None, cancelled=None, lang="en", cookies=""):
     """Dispatch: an LLM-driven closed loop when an attacker LLM is online
     (plan → choose next action from results → execute → validate → re-plan →
     summarise), else the deterministic default playbook.
@@ -113,11 +113,12 @@ def run_engagement(endpoint, selected, allow_internal, max_steps, client: LLMCli
     in Chinese or English to match the console."""
     client = client or LLMClient.attacker()
     url, host = _url_and_host(endpoint)
+    ck = tools_client.cookie_header(cookies)
     if client.online:
         return _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
-                                   on_attempt, cancelled, lang)
+                                   on_attempt, cancelled, lang, ck)
     return _playbook_engagement(client, url, host, selected, allow_internal, max_steps,
-                                on_attempt, cancelled, lang)
+                                on_attempt, cancelled, lang, ck)
 
 
 def _emit(attempts, a, on_attempt):
@@ -131,7 +132,7 @@ def _emit(attempts, a, on_attempt):
 
 
 def _playbook_engagement(client, url, host, selected, allow_internal, max_steps,
-                         on_attempt=None, cancelled=None, lang="en"):
+                         on_attempt=None, cancelled=None, lang="en", cookies=""):
     attempts: list[AttemptRec] = []
 
     # ---- AI plan (or deterministic note) ----
@@ -152,15 +153,15 @@ def _playbook_engagement(client, url, host, selected, allow_internal, max_steps,
         phase, tool = MODULES[mod]
         budget -= 1
         if tool == "__builtin__":
-            for a in _web_probe_attempts(url, lang):
+            for a in _web_probe_attempts(url, lang, cookies):
                 _emit(attempts, a, on_attempt)
             continue
         tgt = host if tool == "nmap" else url
-        res = tools_client.run(tool, tgt, allow_internal=allow_internal)
+        res = tools_client.run(tool, tgt, allow_internal=allow_internal, cookies=cookies)
         _emit(attempts, _attempt_from_tool(mod, phase, res, lang), on_attempt)
 
     # ---- auto-verify EVERY discovered vuln (not just PHP) ----
-    for a in _exploit_verification(url, attempts, lang):
+    for a in _exploit_verification(url, attempts, lang, cookies):
         _emit(attempts, a, on_attempt)
 
     # ---- AI executive summary ----
@@ -205,14 +206,17 @@ def _attempt_from_tool(mod, phase, res, lang="en") -> AttemptRec:
                       findings=findings, phase=phase)
 
 
-def _web_probe_attempts(url, lang="en") -> list[AttemptRec]:
+def _web_probe_attempts(url, lang="en", cookies="") -> list[AttemptRec]:
     """Run the in-process web probes (OWASP) against the URL as part of exploit phase."""
     from . import translations
     out = []
     web = [p for p in all_probes() if getattr(p, "category", "") == "web"]
+    hdrs = {"User-Agent": "Dagger-AI/operator"}
+    if cookies:
+        hdrs["Cookie"] = cookies
     try:
         http = httpx.Client(timeout=config.REQUEST_TIMEOUT, follow_redirects=True,
-                            headers={"User-Agent": "Dagger-AI/operator"})
+                            headers=hdrs)
     except Exception:
         return out
     try:
@@ -270,7 +274,7 @@ def _cve_confirmed(attempts, cve) -> bool:
     return False
 
 
-def _exploit_verification(url, attempts, lang="en") -> list[AttemptRec]:
+def _exploit_verification(url, attempts, lang="en", cookies="") -> list[AttemptRec]:
     """Discovery-driven verification: for EVERY vulnerability discovered (not
     just PHP), try to actively confirm it. A scanner-flagged CVE with a benign
     verifier is exercised hands-on; one without is flagged for manual work so
@@ -281,9 +285,12 @@ def _exploit_verification(url, attempts, lang="en") -> list[AttemptRec]:
     if not cves:
         return []
     out: list[AttemptRec] = []
+    hdrs = {"User-Agent": "Dagger-AI/operator"}
+    if cookies:
+        hdrs["Cookie"] = cookies
     try:
         http = httpx.Client(timeout=config.REQUEST_TIMEOUT, follow_redirects=True,
-                            headers={"User-Agent": "Dagger-AI/operator"})
+                            headers=hdrs)
     except Exception:
         return out
     try:
@@ -458,17 +465,17 @@ def _interpret(client, mod, res, lang="en") -> str:
     return out.strip()
 
 
-def _run_module(mod, url, host, allow_internal, reason, client=None, lang="en"):
+def _run_module(mod, url, host, allow_internal, reason, client=None, lang="en", cookies=""):
     """Run one module, attaching the LLM's reasoning for choosing it (as a step
     note) and a plain-language conclusion of the output (as the rationale)."""
     phase, tool = MODULES[mod]
     out = []
     if tool == "__builtin__":
-        out = _web_probe_attempts(url, lang)
+        out = _web_probe_attempts(url, lang, cookies)
         hits = sum(1 for a in out if a.success)
     else:
         tgt = host if tool == "nmap" else url
-        res = tools_client.run(tool, tgt, allow_internal=allow_internal)
+        res = tools_client.run(tool, tgt, allow_internal=allow_internal, cookies=cookies)
         a = _attempt_from_tool(mod, phase, res, lang)
         if a.steps and reason:
             a.steps[0].note = f"AI chose this — {reason} · " + a.steps[0].note
@@ -483,7 +490,7 @@ def _run_module(mod, url, host, allow_internal, reason, client=None, lang="en"):
 
 
 def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
-                        on_attempt=None, cancelled=None, lang="en"):
+                        on_attempt=None, cancelled=None, lang="en", cookies=""):
     attempts: list[AttemptRec] = []
     chosen = [m for m in MODULES if m in selected] or list(MODULES)
     chosen = _select_for_target(chosen, host)
@@ -511,14 +518,14 @@ def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
             reason = reason or "next phase in order"
         remaining.discard(mod)
         budget -= 1
-        recs, hits = _run_module(mod, url, host, allow_internal, reason, client, lang)
+        recs, hits = _run_module(mod, url, host, allow_internal, reason, client, lang, cookies)
         for a in recs:
             _emit(attempts, a, on_attempt)
         ran.append((mod, hits))
 
     # 2b) AUTO-VERIFY — for EVERY discovered vuln (not just PHP), actively try to
     #     confirm it with a benign PoC; scanner-only CVEs are flagged for manual work.
-    for a in _exploit_verification(url, attempts, lang):
+    for a in _exploit_verification(url, attempts, lang, cookies):
         _emit(attempts, a, on_attempt)
 
     # 3) VALIDATE — the LLM reviews the findings (true positives / FPs / priorities).

@@ -28,9 +28,26 @@ def available() -> dict:
         return {}
 
 
-def run(tool: str, target: str, options: dict | None = None, allow_internal: bool = False) -> dict:
+def cookie_header(raw: str) -> str:
+    """Normalise a campaign's session-cookies field (free-form: newlines and/or
+    semicolons, optional leading 'Cookie:') into a single Cookie header value
+    'name=value; name2=value2'. Returns '' when nothing usable is present."""
+    if not raw:
+        return ""
+    parts = []
+    for chunk in str(raw).replace("\r", "\n").replace(";", "\n").split("\n"):
+        c = chunk.strip()
+        if c.lower().startswith("cookie:"):
+            c = c[len("cookie:"):].strip()
+        if c and "=" in c:
+            parts.append(c)
+    return "; ".join(parts)
+
+
+def run(tool: str, target: str, options: dict | None = None, allow_internal: bool = False,
+        cookies: str = "") -> dict:
     payload = {"tool": tool, "target": target, "options": options or {},
-               "allow_internal": allow_internal}
+               "allow_internal": allow_internal, "cookies": cookies or ""}
     try:
         with httpx.Client(timeout=config.REQUEST_TIMEOUT + 600) as c:
             r = c.post(f"{config.TOOL_RUNNER_URL}/run", headers=_headers(), json=payload)

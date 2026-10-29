@@ -52,6 +52,10 @@ class Campaign(Base):
     probes = Column(JSON, default=list)       # list of probe ids
     orchestrator = Column(String(40), default="single_turn")
     max_turns = Column(Integer, default=6)
+    # Authenticated testing: session cookies for this campaign (one per line, or
+    # "name=value; name2=value2"). Injected as a Cookie header into web probes
+    # and the cookie-capable tool-runner tools so scans run logged-in.
+    session_cookies = Column(Text, default="")
     created_at = Column(DateTime, default=_now)
 
     target = relationship("Target", back_populates="campaigns")
