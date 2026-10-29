@@ -68,4 +68,4 @@ TOOL_RUNNER_TOKEN = _env("DAGGER_TOOL_RUNNER_TOKEN", default="")
 # Max tool invocations per engagement (budget guard).
 MAX_TOOL_STEPS = int(_env("DAGGER_MAX_TOOL_STEPS", default="12"))
 
-VERSION = "1.7.0"
+VERSION = "1.7.1"

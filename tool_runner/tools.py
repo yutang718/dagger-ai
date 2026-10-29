@@ -161,19 +161,52 @@ def nuclei(target, options=None, timeout=600):
 
 
 # ------------------------------------------------------ ffuf (content discovery)
+def _catch_all_baseline(target, options, timeout=20):
+    """Request a random, certainly-nonexistent path. If the server answers it
+    like a real hit (e.g. a catch-all SPA / gateway that returns 200 for every
+    path), return (status, body_size) so ffuf results matching that signature
+    can be dropped as soft-404 noise. Returns (None, None) on failure."""
+    import random
+    import string
+    rnd = "zzdagger" + "".join(random.choices(string.ascii_lowercase + string.digits, k=18)) + "-nope"
+    url = target.rstrip("/") + "/" + rnd
+    # No -L: ffuf doesn't follow redirects, so capture the same first-hop status/size
+    # (a gateway that 302-redirects every path is itself a catch-all signature).
+    cmd = ["curl", "-s", "-k", "-o", "/dev/null", "-w", "%{http_code} %{size_download}",
+           "--max-time", "15"]
+    c = (options or {}).get("cookies", "")
+    if c:
+        cmd += ["-H", "Cookie: " + c]
+    cmd += [url]
+    rc, out, ms, err = _run(cmd, timeout)
+    try:
+        code, size = (out.strip().split() + ["", ""])[:2]
+        return int(code), int(size)
+    except (ValueError, TypeError):
+        return None, None
+
+
 def ffuf(target, options=None, timeout=240):
     if not _which("ffuf"):
         return _result("ffuf", "ffuf", available=False)
     wordlist = (options or {}).get("wordlist", "/usr/share/seclists/Discovery/Web-Content/common.txt")
     base = target.rstrip("/") + "/FUZZ"
+    # Soft-404 / catch-all baseline (a random path) + ffuf's own auto-calibration.
+    base_code, base_len = _catch_all_baseline(target, options)
+    catch_all = base_code in (200, 201, 204, 301, 302, 307, 401, 403)
     cmd = ["ffuf", "-u", base, "-w", wordlist, "-mc", "200,204,301,302,307,401,403",
-           "-of", "json", "-o", "/dev/stdout", "-s"] + _cookie_args("ffuf", options)
+           "-ac", "-of", "json", "-o", "/dev/stdout", "-s"] + _cookie_args("ffuf", options)
     rc, out, ms, err = _run(cmd, timeout)
     findings, obs = [], []
+    suppressed = 0
     try:
         data = json.loads(out[out.index("{"):out.rindex("}") + 1]) if "{" in out else {}
         for r in data.get("results", []):
-            path = r.get("url", ""); status = r.get("status", "")
+            path = r.get("url", ""); status = r.get("status", ""); length = r.get("length", 0)
+            # Drop results that match the catch-all signature (same status + ~same size).
+            if catch_all and status == base_code and (base_len is None or abs(length - base_len) <= 64):
+                suppressed += 1
+                continue
             obs.append(f"{status} {path}")
             if any(s in path.lower() for s in SENSITIVE_PATHS):
                 findings.append({"title": f"Sensitive path exposed: {path}",
@@ -183,6 +216,11 @@ def ffuf(target, options=None, timeout=240):
                                  "remediation": "Remove/relocate or require authentication for sensitive paths."})
     except (ValueError, json.JSONDecodeError):
         pass
+    if catch_all:
+        obs.insert(0, f"catch-all / soft-404 detected: a random non-existent path returned HTTP "
+                      f"{base_code} (~{base_len}B), so this host answers unknown paths like real ones. "
+                      f"ffuf auto-calibration was enabled and {suppressed} residual wildcard match(es) "
+                      f"dropped — path brute-forcing is unreliable here (gateway/SPA catch-all).")
     return _result("ffuf", cmd, rc, out, ms, findings, obs, error=err)
 
 
