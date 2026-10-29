@@ -235,12 +235,20 @@ def _web_probe_attempts(url, lang="en") -> list[AttemptRec]:
 
 
 # -------------------------------------------------------------- LLM glue
-_PLAN_SYS = ("You are a senior penetration tester planning an AUTHORIZED engagement. "
-             "Given the target and the available modules, write a brief, ordered plan (<=120 words) "
-             "describing what each phase checks and why. No preamble.")
-_SUM_SYS = ("You are a senior penetration tester writing the executive summary of an AUTHORIZED "
-            "engagement. Given the findings list, summarise risk, the most critical issues, and "
-            "top remediation priorities in <=150 words.")
+# Shared expert persona — a CREST-certified senior pentester's mindset: thinks
+# in attack chains and business impact, separates real exploitable issues from
+# noise, evidence-driven, never overstates confidence.
+_EXPERT = ("You are a CREST-certified (CCT APP & INF) senior penetration tester with 15+ years of "
+           "hands-on experience, working to the OWASP Testing Guide and PTES. You reason in attack "
+           "chains and business impact, distinguish genuinely exploitable issues from noise, cite "
+           "concrete evidence, and never overstate confidence. This is an AUTHORIZED, scoped engagement. ")
+
+_PLAN_SYS = (_EXPERT + "Plan the engagement: given the target and the available modules, write a "
+             "concise, ordered plan (<=130 words) — what each phase establishes, which results would "
+             "change your approach, and the highest-value checks for this target type. No preamble.")
+_SUM_SYS = (_EXPERT + "Write the executive summary: the overall risk posture, the most critical "
+            "issues, any realistic ATTACK CHAIN leading to high impact, and the top remediation "
+            "priorities in order. Clear for management, precise for engineers. <=180 words. No preamble.")
 
 
 def _plan(client, url, host, chosen, lang="en"):
@@ -285,15 +293,15 @@ def _summary(client, host, attempts, lang="en"):
 
 # ============================================================ agentic loop
 _NEXT_SYS = (
-    "You are an autonomous penetration-test operator running an AUTHORIZED engagement. "
-    "Given the target, the modules still available, and the results so far, choose the single "
-    "most valuable NEXT module to run — or stop when further scanning adds little value. "
-    "Respect the phase order (recon → fingerprint → discovery → vuln → exploit). "
-    'Reply ONLY with JSON: {"module": "<module_id>|stop", "reason": "<one short sentence>"}.')
+    _EXPERT + "You are driving the engagement tool-by-tool. Given the modules still available and "
+    "the results so far, choose the single most valuable NEXT module — prioritise by what the "
+    "current evidence suggests is most likely exploitable and impactful, following the kill-chain "
+    "order (recon → fingerprint → discovery → vuln → exploit). "
+    'Reply ONLY with JSON: {"module": "<module_id>", "reason": "<one expert sentence>"}.')
 _VAL_SYS = (
-    "You are a senior penetration tester VALIDATING the findings of an AUTHORIZED engagement. "
-    "For the findings given, state which are likely true positives vs. need manual verification, "
-    "note any likely false positives, and give the top remediation priorities. <=120 words, no preamble.")
+    _EXPERT + "VALIDATE the findings: for each, judge true-positive vs. needs-manual-verification "
+    "vs. likely false-positive with brief reasoning; call out any ATTACK CHAINS (how findings "
+    "combine to escalate impact); and give the top remediation priorities in order. <=170 words. No preamble.")
 
 
 def _next_action(client, url, host, remaining, ran) -> dict:
@@ -318,9 +326,9 @@ def _validate(client, host, attempts, lang="en") -> str:
 
 
 _INTERP_SYS = (
-    "You are a penetration tester explaining ONE tool's result to a teammate in plain language. "
-    "In 1-2 short sentences, say what this step found and what it means for the target's security "
-    "(or that it found nothing notable). No preamble, no raw output, no markdown, no bullet points.")
+    _EXPERT + "Explain ONE tool's result to the team in plain language: in 1-2 sentences say what "
+    "it found, why it matters (exploitability, what it could lead to, chaining potential), or that "
+    "nothing notable was found. No preamble, no raw output, no markdown, no bullet points.")
 
 
 def _lang_suffix(lang: str) -> str:

@@ -47,6 +47,9 @@ PROBE_ZH = {
     "security_misconfiguration": ("安全配置错误", "检查是否缺失加固响应头以及栈/SQL 报错泄露。"),
     "vulnerable_components": ("易受攻击和过时的组件", "检测会便于针对已知漏洞的版本横幅泄露。"),
     "auth_failures": ("身份识别与认证失效", "用一小组默认凭据尝试登录端点。"),
+    "ssti": ("服务端模板注入", "测试用户输入是否被服务端模板引擎执行（可致远程代码执行）。"),
+    "cve_2024_4577": ("PHP-CGI 参数注入 (CVE-2024-4577)",
+                      "测试 PHP-CGI 参数注入 RCE（CVE-2024-4577）：以软连字符 %AD 注入 -d 指令并执行 PHP 载荷。"),
 }
 
 # Pentest module Chinese names (keyed by module id from operator.MODULES).
