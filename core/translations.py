@@ -52,6 +52,9 @@ PROBE_ZH = {
                       "测试 PHP-CGI 参数注入 RCE（CVE-2024-4577）：以软连字符 %AD 注入 -d 指令并执行良性 PHP 载荷，通过服务端计算结果验证可被利用。"),
     "cve_2021_41773": ("Apache 路径穿越 (CVE-2021-41773 / 42013)",
                        "测试 Apache 2.4.49/2.4.50 路径穿越：以编码的 ../ 越出站点根目录，读取系统文件以验证（良性）。"),
+    "security_gateway": ("安全网关 / WAF 前置",
+                         "识别目标是否位于安全网关/WAF/SSO 之后（跳转登录、抹掉指纹头、拦截探测），"
+                         "以解释为何指纹识别（如 PHP）与漏洞探测在该 URL 下无结果，并给出应对建议。"),
 }
 
 # Pentest module Chinese names (keyed by module id from operator.MODULES).

@@ -405,3 +405,86 @@ class ApachePathTraversal(WebProbe):
                                    "(root entry: %s) — files outside the document root are exposed." % m.group(0))]
         return [AttemptRec("encoded-traversal", self.objective, steps, False, 0.0, "",
                            "Not exploitable (traversal blocked; not a vulnerable Apache build).")]
+
+
+# Header-name fingerprints of a fronting security gateway / WAF / CDN.
+_GW_HDR = ("x-sec-ngx", "x-tunnel-proxy", "x-tunnel-nginx", "x-inf-ngx", "x-sec-gw",
+           "x-waf", "x-cdn", "cf-ray", "x-amz-cf-id", "x-akamai", "x-sucuri",
+           "x-protected-by", "x-firewall", "x-safe-firewall", "server-safedog")
+# Server-banner fingerprints of a gateway / WAF.
+_GW_SERVER = ("stgw", "cloudflare", "akamaighost", "awselb", "sucuri", "safedog",
+              "yunjiasu", "yundun", "sec-gw", "bigip", "fortiweb", "imperva", "incapsula")
+# Location substrings that indicate an unauthenticated redirect to an SSO / login gateway.
+_SSO_LOC = ("sso", "check_login", "/login", "oauth", "signin", "sign_in", "/auth",
+            "cas/login", "adfs", "openid", "sec-gw", "idp")
+
+
+@register
+class SecurityGateway(WebProbe):
+    """Detects a fronting security gateway / WAF / SSO proxy. Not a target
+    weakness — an operational finding that explains WHY fingerprinting (e.g.
+    PHP) and vuln probes come back empty: the gateway redirects unauthenticated
+    traffic to a login, strips backend fingerprint headers, and filters probes."""
+    id = "security_gateway"
+    name = "Security Gateway / WAF Fronting"
+    owasp = ""
+    mitre = "T1590.002"
+    severity = "info"
+    objective = "Detect a fronting security gateway / WAF / SSO that limits scanning."
+    description = ("Checks whether the target sits behind a security gateway, WAF, or SSO proxy that "
+                   "redirects unauthenticated requests to a login, strips backend fingerprint headers "
+                   "(Server / X-Powered-By), or filters probe traffic — which hides the real application "
+                   "and prevents tech fingerprinting and vulnerability detection at this URL.")
+    remediation = ("Not a target weakness — a scan-coverage limitation. To actually assess the app: "
+                   "point the target at the backend/API base URL behind the gateway (find it in the "
+                   "browser's Network panel), set a valid session cookie on the campaign and keep it "
+                   "fresh. While the gateway strips headers and filters requests, PHP/framework "
+                   "fingerprinting and CVE probes cannot reach the backend.")
+
+    def execute(self, base_url, http):
+        signals, steps = [], []
+        s1, r1 = _req(http, "GET", base_url,
+                      "Check for a fronting security gateway / WAF (headers, no redirect follow)",
+                      follow_redirects=False)
+        steps.append(s1)
+        if r1 is None:
+            return [AttemptRec("gateway-fingerprint", self.objective, steps, False, 0.0, "",
+                               "No response — could not assess gateway fronting.")]
+        h = {k.lower(): v for k, v in r1.headers.items()}
+        server = (h.get("server", "") or "").lower()
+        powered = h.get("x-powered-by", "")
+        loc = h.get("location", "")
+        found_hdrs = sorted({k for k in h if any(sig in k for sig in _GW_HDR)})
+        found_server = [w for w in _GW_SERVER if w in server]
+        sso = r1.status_code in (301, 302, 303, 307, 308) and any(k in loc.lower() for k in _SSO_LOC)
+        if found_hdrs:
+            signals.append("gateway/WAF headers present: " + ", ".join(found_hdrs[:6]))
+        if found_server:
+            signals.append("gateway/WAF server banner: " + server)
+        if sso:
+            signals.append("unauthenticated request redirects to an SSO/login gateway: " + loc[:140])
+        if not server and not powered and (found_hdrs or found_server):
+            signals.append("backend fingerprint headers (Server / X-Powered-By) are stripped by the "
+                           "gateway — upstream tech such as PHP cannot be fingerprinted at this URL")
+        # If we got through authenticated (200, no SSO seen), re-request WITHOUT the
+        # session cookie to reveal the auth gateway and confirm the cookie is required.
+        if r1.status_code == 200 and not sso:
+            s2, r2 = _req(http, "GET", base_url,
+                          "Re-request without the session cookie to reveal auth-gateway behavior",
+                          follow_redirects=False, headers={"Cookie": ""})
+            steps.append(s2)
+            if r2 is not None:
+                loc2 = (r2.headers.get("location", "") or "")
+                if r2.status_code in (301, 302, 303, 307, 308) and any(k in loc2.lower() for k in _SSO_LOC):
+                    signals.append("without a session cookie the same URL redirects to SSO/login (" +
+                                   loc2[:120] + ") — a fresh session cookie is required for any scan to "
+                                   "see the app")
+        if signals:
+            ev = " | ".join(signals)[:700]
+            return [AttemptRec("gateway-fingerprint", self.objective, steps, True, 1.0, ev,
+                               "Target is behind a security gateway / WAF / SSO. This is why PHP (and "
+                               "other backend tech) is not fingerprinted and recent CVEs are not found at "
+                               "this URL — the gateway hides the backend and filters probes. Scan the "
+                               "backend/API URL with a fresh session cookie instead.")]
+        return [AttemptRec("gateway-fingerprint", self.objective, steps, False, 0.0, "",
+                           "No fronting security gateway / WAF detected.")]

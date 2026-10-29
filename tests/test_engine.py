@@ -194,3 +194,26 @@ def test_campaign_cookies_reach_tools(monkeypatch):
     operator.run_engagement("http://127.0.0.1:9999", ["vuln_nuclei"], False, 6, offline,
                             cookies="session=abc\n_gitlab_session=def")
     assert seen.get("nuclei") == "session=abc; _gitlab_session=def"
+
+
+def test_security_gateway_probe_detects_fronting():
+    # A target behind a gateway (strips Server/X-Powered-By, shows X-SEC-NGX,
+    # and bounces cookie-less requests to SSO) must be reported; a plain PHP
+    # site must not be.
+    import core.probes.web as w
+    from core.probes.base import REGISTRY
+
+    class _R:
+        def __init__(s, status, headers): s.status_code=status; s.headers=headers; s.text=""
+    class _H:
+        def __init__(s, seq): s.seq=seq; s.i=0
+        def request(s, m, u, **kw):
+            r=s.seq[min(s.i,len(s.seq)-1)]; s.i+=1; return r
+
+    p = REGISTRY["security_gateway"]
+    gated = p.execute("https://x/dash", _H([
+        _R(200, {"X-SEC-NGX": "vm", "x-tunnel-proxy": "vm", "Content-Type": "text/html"}),
+        _R(302, {"Location": "https://sec-gw.example/sso/check_login?x"})]))
+    assert gated[0].success and "gateway" in gated[0].evidence.lower()
+    plain = p.execute("http://y", _H([_R(200, {"Server": "nginx", "X-Powered-By": "PHP/8.2"})]))
+    assert plain[0].success is False

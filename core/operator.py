@@ -235,8 +235,11 @@ def _web_probe_attempts(url, lang="en", cookies="") -> list[AttemptRec]:
                         "description": p.description, "remediation": p.remediation,
                     }]
                 if lang == "zh":   # localize the conclusion shown in the UI
-                    a.rationale = (f"确认漏洞：{pname}（详见证据）。" if a.success
-                                   else f"未发现 {pname} 问题。")
+                    if a.success:
+                        verb = "检测到" if p.severity == "info" else "确认漏洞"
+                        a.rationale = f"{verb}：{pname}（详见证据）。"
+                    else:
+                        a.rationale = f"未发现 {pname} 问题。"
                 out.append(a)
     finally:
         http.close()
