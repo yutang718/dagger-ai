@@ -106,7 +106,7 @@ document.querySelectorAll("nav a").forEach(a =>
 function show(view) {
   S.view = view; clearInterval(S.pollTimer); closeDrawer();
   document.querySelectorAll("nav a").forEach(x => x.classList.toggle("active", x.dataset.view === view));
-  ({ dashboard: viewDashboard, targets: viewTargets, campaigns: viewCampaigns,
+  ({ dashboard: viewDashboard, targets: viewTargets, campaigns: viewCampaigns, verify: viewVerify,
      runs: viewRuns, monitor: viewMonitor, settings: viewSettings }[view] || viewDashboard)();
 }
 
@@ -508,6 +508,51 @@ function campaignForm(ts, existing){
                 {method: ed?"PATCH":"POST", body:JSON.stringify(body)});
       closeDrawer(); viewCampaigns(); toast(ed?t("toast.campaignUpdated"):t("toast.campaignCreated")); }
     catch(e){ toast(e.message); }
+  };
+}
+
+/* ---------- targeted single-vuln verify ---------- */
+async function viewVerify(){
+  const ts = await api("/targets");
+  const webProbes = (S.meta.probes||[]).filter(p=>p.category==="web");
+  const topts = ts.map(x=>`<option value="${x.id}">${esc(x.name)}${x.authorized?"":t("notAuthorized")}</option>`).join("");
+  const vopts = webProbes.map(p=>`<option value="${p.id}">${esc(probeName(p))}${p.owasp?` (${p.owasp})`:""}</option>`).join("");
+  main().innerHTML = `
+    <h1>${t("verify.title")}</h1><p class="lead">${t("verify.lead")}</p>
+    <div class="panel" style="max-width:720px">
+      <label>${t("verify.target")}</label><select id="v-target">${topts}</select>
+      <label>${t("verify.vuln")}</label><select id="v-probe">${vopts}</select>
+      <label>${t("verify.url")} <span class="no">${t("verify.urlHint")}</span></label>
+      <input id="v-url" placeholder="${t("verify.urlPh")}">
+      <label>${t("verify.cookie")} <span class="no">${t("verify.cookieHint")}</span></label>
+      <textarea id="v-cookie" rows="2" style="font-family:var(--mono);font-size:12px"></textarea>
+      <div class="row" style="margin-top:14px"><button id="v-run">${t("verify.run")}</button></div>
+    </div>
+    <div id="v-result" style="max-width:900px;margin-top:16px">${ts.length?"":`<div class="empty">${t("verify.noTarget")}</div>`}</div>`;
+  const btn = $("#v-run");
+  if(btn) btn.onclick = async () => {
+    btn.disabled=true; btn.textContent=t("verify.running");
+    $("#v-result").innerHTML=`<div class="no" style="padding:12px 0">${t("verify.running")}</div>`;
+    try{
+      const r = await api("/verify",{method:"POST",body:JSON.stringify({
+        target_id:+$("#v-target").value, probe:$("#v-probe").value,
+        url:$("#v-url").value.trim(), cookies:$("#v-cookie").value })});
+      const a = {probe:r.name, technique:r.name, severity:r.severity, owasp:r.owasp,
+        success:r.success, score:r.score||0, phase:r.phase||"exploit",
+        objective:r.objective, rationale:r.rationale, evidence:r.evidence, steps:r.steps||[]};
+      const steps=(a.steps||[]).map(s=>`
+        <div class="step"><div class="sh"><span>${stepKindBadge(s.role)} ${t("attempt.step")} ${(s.idx??0)+1} · ${esc(s.role)}</span>
+          <span>${s.latency_ms||0} ms</span></div>
+          <div class="io"><div class="lab">▸ ${esc(s.note||"")}</div>
+            <pre>${esc(s.prompt||"")}</pre>
+            <div class="lab">${t("attempt.targetResponse")}</div>
+            <pre class="resp">${esc(s.response||"")}</pre></div></div>`).join("");
+      $("#v-result").innerHTML = `<div class="panel">
+          <h3>${a.success?"✔ ":"✘ "}${esc(techLabel(a.probe))} <span class="tag mono">${esc(r.target)}</span></h3>
+          ${exploitCard(a)}
+          <h3 style="margin-top:14px">${t("attempt.trail",{n:a.steps.length})}</h3>${steps}</div>`;
+    }catch(e){ $("#v-result").innerHTML=`<div class="err" style="padding:10px 0">⚠ ${esc(e.message)}</div>`; }
+    finally{ btn.disabled=false; btn.textContent=t("verify.run"); }
   };
 }
 

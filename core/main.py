@@ -345,6 +345,81 @@ def delete_target(tid: int, _: str = auth.auth_dep, db: Session = Depends(get_se
     return {"deleted": tid}
 
 
+# -------------------------------------------------- targeted single-vuln verify
+class VerifyIn(BaseModel):
+    target_id: int
+    probe: str            # probe id, CVE id, or a name/id substring
+    url: str = ""         # optional same-host endpoint override
+    cookies: str = ""
+
+
+def _resolve_probe(q: str):
+    """Resolve a user-typed vulnerability name/id/CVE to a web probe."""
+    from .probes import base as pbase
+    q = (q or "").strip()
+    if not q:
+        return None
+    p = pbase.REGISTRY.get(q)
+    if p is None:
+        p = pbase.verifier_for(q)          # a CVE id -> its verifier probe
+    if p is None:
+        ql = q.lower()
+        for c in all_probes():
+            if getattr(c, "category", "") != "web":
+                continue
+            cves = " ".join(getattr(c, "cves", ()))
+            if ql in c.id.lower() or ql in c.name.lower() or ql in cves.lower():
+                p = c
+                break
+    return p if (p is not None and getattr(p, "category", "") == "web") else None
+
+
+@app.post("/api/verify")
+def verify_vuln(body: VerifyIn, _: str = auth.auth_dep, db: Session = Depends(get_session)):
+    """Run ONE probe against a registered authorized target for a quick,
+    preliminary verification — returns the exact payload, result and evidence.
+    Benign proof-of-concept only (no shell / weaponization)."""
+    import httpx
+    t = db.get(Target, body.target_id)
+    if not t:
+        raise HTTPException(404, "target not found")
+    if config.REQUIRE_AUTHORIZATION and not t.authorized:
+        raise HTTPException(403, "target is not marked authorized — authorize it first")
+    p = _resolve_probe(body.probe)
+    if p is None:
+        raise HTTPException(404, f"no web vulnerability matches '{body.probe}'")
+    target_url = (body.url or "").strip() or (t.endpoint or "")
+    if not target_url:
+        raise HTTPException(400, "no target URL")
+    if body.url:   # override must stay on the authorized target's host
+        from urllib.parse import urlparse
+        oh, th = urlparse(body.url).hostname, urlparse(t.endpoint or "").hostname
+        if oh and th and oh != th:
+            raise HTTPException(400, "override URL must be the same host as the target")
+    ck = tools_client.cookie_header(body.cookies)
+    hdrs = {"User-Agent": "Dagger-AI/verify"}
+    if ck:
+        hdrs["Cookie"] = ck
+    http = httpx.Client(timeout=config.REQUEST_TIMEOUT, follow_redirects=True, headers=hdrs)
+    try:
+        recs = p.execute(target_url, http)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"probe error: {e}")
+    finally:
+        http.close()
+    a = recs[0] if recs else None
+    if a is None:
+        raise HTTPException(500, "probe produced no result")
+    return {
+        "probe": p.id, "name": p.name, "severity": p.severity, "owasp": p.owasp,
+        "atlas": getattr(p, "mitre", ""), "target": target_url,
+        "success": a.success, "score": a.score, "objective": a.objective,
+        "evidence": a.evidence, "rationale": a.rationale, "phase": a.phase or "exploit",
+        "steps": [{"idx": i, "role": s.role, "prompt": s.prompt, "response": s.response,
+                   "note": s.note, "latency_ms": s.latency_ms} for i, s in enumerate(a.steps)],
+    }
+
+
 # ----------------------------------------------------------------- campaigns
 def _campaign_json(c: Campaign):
     return {"id": c.id, "name": c.name, "target_id": c.target_id, "probes": c.probes,
