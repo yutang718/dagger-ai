@@ -217,3 +217,26 @@ def test_security_gateway_probe_detects_fronting():
     assert gated[0].success and "gateway" in gated[0].evidence.lower()
     plain = p.execute("http://y", _H([_R(200, {"Server": "nginx", "X-Powered-By": "PHP/8.2"})]))
     assert plain[0].success is False
+
+
+def test_php_fingerprint_banner_independent():
+    # Detect PHP with NO Server/X-Powered-By header: via PHPSESSID cookie and
+    # .php handler behaviour. A catch-all (everything 200) must not false-positive.
+    from core.probes.base import REGISTRY
+    import core.probes.web
+
+    class _R:
+        def __init__(s, status, headers=None): s.status_code=status; s.headers=headers or {}; s.text=""
+    class _H:
+        def __init__(s, m): s.m=m
+        def request(s, meth, u, **kw):
+            for k, v in s.m.items():
+                if k in u: return v
+            return s.m["_default"]
+
+    p = REGISTRY["php_fingerprint"]
+    php = p.execute("http://t/", _H({"index.php": _R(200), ".php": _R(404),
+                                     "_default": _R(200, {"Set-Cookie": "PHPSESSID=abc; path=/"})}))
+    assert php[0].success and "phpsessid" in php[0].evidence.lower()
+    catchall = p.execute("http://t/", _H({"_default": _R(200, {"Set-Cookie": "session=1"})}))
+    assert catchall[0].success is False

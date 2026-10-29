@@ -488,3 +488,77 @@ class SecurityGateway(WebProbe):
                                "backend/API URL with a fresh session cookie instead.")]
         return [AttemptRec("gateway-fingerprint", self.objective, steps, False, 0.0, "",
                            "No fronting security gateway / WAF detected.")]
+
+
+@register
+class PHPFingerprint(WebProbe):
+    """Identify a PHP backend WITHOUT relying on Server / X-Powered-By headers.
+    Modern PHP runs with expose_php=Off, so the banner reveals nothing; this
+    probe infers PHP from behaviour: session-cookie names, .php handler
+    behaviour, and framework fingerprint paths."""
+    id = "php_fingerprint"
+    name = "PHP Fingerprint (banner-independent)"
+    owasp = ""
+    mitre = "T1592.002"
+    severity = "info"
+    objective = "Identify a PHP backend without Server / X-Powered-By headers."
+    description = ("Modern PHP hides its version and identity (expose_php=Off), so HTTP headers don't "
+                   "reveal it. This probe infers PHP behaviourally: PHP/framework session-cookie names "
+                   "(PHPSESSID, laravel_session, ci_session, CAKEPHP...), whether the server handles "
+                   ".php (index.php works but a random .php 404s), and framework fingerprint paths.")
+    remediation = ("Informational. If PHP is confirmed, the PHP CVE / SQLi / SSTI probes and nuclei "
+                   "target it. To reduce fingerprinting, rename the session cookie, use pretty URLs "
+                   "and remove framework debug/default paths.")
+
+    _CK = {"phpsessid": "PHP", "laravel_session": "Laravel (PHP)", "ci_session": "CodeIgniter (PHP)",
+           "cakephp": "CakePHP (PHP)", "symfony": "Symfony (PHP)", "yii": "Yii (PHP)",
+           "wordpress_": "WordPress (PHP)", "wp-settings": "WordPress (PHP)"}
+    _FW_PATHS = [("/wp-login.php", "WordPress"), ("/_ignition/health-check", "Laravel Ignition"),
+                 ("/_profiler/", "Symfony profiler"), ("/phpinfo.php", "phpinfo")]
+
+    def _setcookie(self, r):
+        if r is None:
+            return ""
+        return " ".join(v for k, v in r.headers.items() if k.lower() == "set-cookie").lower()
+
+    def execute(self, base_url, http):
+        import random
+        signals, steps = [], []
+        # 1) session-cookie names (survive expose_php=Off)
+        s0, r0 = _req(http, "GET", base_url, "Read Set-Cookie for a PHP/framework session cookie",
+                      follow_redirects=False)
+        steps.append(s0)
+        low = self._setcookie(r0)
+        for name, fw in self._CK.items():
+            if name in low:
+                signals.append(f"session cookie '{name}' -> {fw}")
+        # 2) .php handler behaviour: /index.php vs a random .php
+        s1, r1 = _req(http, "GET", urljoin(base_url, "/index.php"), "Probe /index.php",
+                      follow_redirects=False)
+        rp = "/zz%d.php" % random.randint(10000, 99999)
+        s2, r2 = _req(http, "GET", urljoin(base_url, rp),
+                      "Probe a random .php (should 404 if the server handles PHP)",
+                      follow_redirects=False)
+        steps += [s1, s2]
+        rand_code = r2.status_code if r2 is not None else None
+        catch_all = rand_code == 200   # random path 200 => catch-all; 200-based signals untrustworthy
+        if r1 is not None and rand_code is not None and not catch_all:
+            if r1.status_code in (200, 301, 302, 403) and rand_code == 404 and r1.status_code != rand_code:
+                signals.append(f"/index.php -> {r1.status_code} but random .php -> 404: the server "
+                               "executes .php")
+        # 3) framework fingerprint paths — only trust a genuine 200 that differs
+        #    from the random baseline (so catch-all 200/302 redirects don't count)
+        if not catch_all and rand_code is not None:
+            for path, fw in self._FW_PATHS:
+                s, r = _req(http, "GET", urljoin(base_url, path), f"Probe {fw} path {path}",
+                            follow_redirects=False)
+                steps.append(s)
+                if r is not None and r.status_code == 200 and rand_code != 200:
+                    signals.append(f"{path} present -> {fw} (PHP)")
+        if signals:
+            ev = " | ".join(signals)[:500]
+            return [AttemptRec("php-fingerprint", self.objective, steps, True, 1.0, ev,
+                               "PHP backend identified without banner headers: " + signals[0] +
+                               ". The PHP CVE / SQLi / SSTI probes and nuclei apply to it.")]
+        return [AttemptRec("php-fingerprint", self.objective, steps, False, 0.0, "",
+                           "No banner-independent PHP signal (hardened pretty-URL app, not PHP, or gated).")]

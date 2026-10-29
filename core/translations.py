@@ -55,6 +55,9 @@ PROBE_ZH = {
     "security_gateway": ("安全网关 / WAF 前置",
                          "识别目标是否位于安全网关/WAF/SSO 之后（跳转登录、抹掉指纹头、拦截探测），"
                          "以解释为何指纹识别（如 PHP）与漏洞探测在该 URL 下无结果，并给出应对建议。"),
+    "php_fingerprint": ("PHP 指纹（不依赖响应头）",
+                        "现代 PHP 默认 expose_php=Off，响应头不暴露版本/身份。此探针用行为特征判断 PHP："
+                        "会话 Cookie 名（PHPSESSID、laravel_session、ci_session 等）、.php 处理行为、框架指纹路径。"),
 }
 
 # Pentest module Chinese names (keyed by module id from operator.MODULES).
