@@ -13,21 +13,37 @@ import time
 from urllib.parse import (parse_qsl, quote, urlencode, urljoin, urlparse,
                           urlunparse)
 
+from .. import config
 from .base import JudgeResult, WebProbe, register
 from ..records import AttemptRec, StepRec
 
 MARK = "DAGGER-XSS-4417"
 
 
+def _is_demo_target(base_url):
+    """True only when base_url is the bundled intentionally-vulnerable demo
+    webapp — the one host where the hardcoded /products, /search, /ping demo
+    paths actually exist."""
+    try:
+        demo_host = urlparse(config.DEMO_WEB_URL).hostname or config.DEMO_HOST
+        return (urlparse(base_url).hostname or "") == demo_host
+    except Exception:
+        return False
+
+
 def _param_url(base_url, param, value, fallback_path):
     """Build a test URL by injecting `value` into an existing query parameter on
-    base_url (preferring `param` if present, else the first param found). If
-    base_url has no query string, fall back to the given demo path/param so the
-    probes still work against the bundled vulnerable-webapp target."""
+    base_url (preferring `param` if present, else the first param found).
+
+    If base_url has NO query string: on the bundled demo webapp, fall back to
+    the given demo path so those probes keep working out of the box; on any
+    other (real) target, return None — there's no parameter here to inject
+    into, and guessing a hardcoded path like /products?id= on a real site just
+    404s/502s and tests nothing. Callers must handle a None return."""
     pr = urlparse(base_url)
     qs = parse_qsl(pr.query, keep_blank_values=True)
     if not qs:
-        return urljoin(base_url, fallback_path)
+        return urljoin(base_url, fallback_path) if _is_demo_target(base_url) else None
     names = [k for k, _ in qs]
     target = param if param in names else names[0]
     new_qs = [(k, value if k == target else v) for k, v in qs]
@@ -36,6 +52,11 @@ def _param_url(base_url, param, value, fallback_path):
 
 def _first_param(base_url):
     return parse_qsl(urlparse(base_url).query, keep_blank_values=True)[0][0] if urlparse(base_url).query else ""
+
+
+_NO_PARAM_MSG = ("No query parameter on this URL to inject into (and it isn't the bundled demo "
+                 "app). Point the probe at a real endpoint that takes a parameter, e.g. via the "
+                 "Verify page's endpoint-URL override, or run JS/endpoint discovery first.")
 
 
 def _req(http, method, url, note, **kw):
@@ -82,6 +103,8 @@ class SQLInjection(WebProbe):
         # /products?id=1 path when base_url carries no parameters at all.
         param = _first_param(base_url) or "id"
         baseline_url = _param_url(base_url, param, "1", "/products?id=1")
+        if baseline_url is None:
+            return [AttemptRec("error+boolean-sqli", self.objective, [], False, 0.0, "", _NO_PARAM_MSG)]
         s0, r0 = _req(http, "GET", baseline_url, "Baseline request with benign %s=1" % param)
         base_len = len(r0.text) if r0 is not None else 0
 
@@ -127,6 +150,8 @@ class CommandInjection(WebProbe):
         payload = "127.0.0.1; id"
         param = _first_param(base_url) or "host"
         url = _param_url(base_url, param, payload, "/ping?host=" + quote(payload))
+        if url is None:
+            return [AttemptRec("shell-metacharacter", self.objective, [], False, 0.0, "", _NO_PARAM_MSG)]
         s, r = _req(http, "GET", url, "Append `; id` to the %s parameter (command chaining)" % param)
         text = r.text if r is not None else ""
         m = re.search(r"uid=\d+\(.*?\)\s+gid=\d+\([^)]*\)", text)
@@ -154,6 +179,8 @@ class ReflectedXSS(WebProbe):
         payload = f"<script>{MARK}</script>"
         param = _first_param(base_url) or "q"
         url = _param_url(base_url, param, payload, "/search?q=" + quote(payload))
+        if url is None:
+            return [AttemptRec("reflected-marker", self.objective, [], False, 0.0, "", _NO_PARAM_MSG)]
         s, r = _req(http, "GET", url, "Submit a <script> payload in the %s parameter" % param)
         text = r.text if r is not None else ""
         success = payload in text
@@ -243,9 +270,10 @@ class SecurityMisconfiguration(WebProbe):
             have = {k.lower() for k in r.headers}
             missing = [h for h in self.WANT if h not in have]
         _sm_param = _first_param(base_url) or "id"
-        s2, r2 = _req(http, "GET",
-                      _param_url(base_url, _sm_param, "'", "/products?id=" + quote("'")),
-                      "Trigger an error to check for verbose stack/SQL disclosure")
+        _sm_url = _param_url(base_url, _sm_param, "'", "/products?id=" + quote("'"))
+        s2, r2 = (None, None)
+        if _sm_url is not None:
+            s2, r2 = _req(http, "GET", _sm_url, "Trigger an error to check for verbose stack/SQL disclosure")
         verbose = bool(r2 is not None and re.search(r"(traceback|sqlite|at line \d|stack)",
                                                     r2.text, re.I))
         success = len(missing) >= 2 or verbose
@@ -256,7 +284,8 @@ class SecurityMisconfiguration(WebProbe):
             bits.append("verbose error disclosure")
         evidence = "; ".join(bits)
         rationale = ("Hardening gaps found." if success else "Baseline hardening present.")
-        return [AttemptRec("header+error-audit", self.objective, [s, s2],
+        steps = [st for st in (s, s2) if st is not None]
+        return [AttemptRec("header+error-audit", self.objective, steps,
                            success, 0.6 if success else 0.0, evidence, rationale)]
 
 
@@ -335,6 +364,8 @@ class SSTI(WebProbe):
         payloads = ["{{%d*%d}}" % (a, b), "${%d*%d}" % (a, b), "#{%d*%d}" % (a, b),
                     "{%d*%d}" % (a, b), "<%%= %d*%d %%>" % (a, b)]
         param = _first_param(base_url) or "q"
+        if _param_url(base_url, param, payloads[0], "/search?q=" + quote(payloads[0])) is None:
+            return [AttemptRec("template-eval", self.objective, [], False, 0.0, "", _NO_PARAM_MSG)]
         last = None
         for tpl in payloads:
             url = _param_url(base_url, param, tpl, "/search?q=" + quote(tpl))

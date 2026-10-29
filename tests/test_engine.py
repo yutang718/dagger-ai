@@ -52,8 +52,12 @@ def test_vulnerable_agent_reads_flag():
 # --- web probes against the bundled vulnerable web app (in-process) ----------
 from fastapi.testclient import TestClient                    # noqa: E402
 from vulnerable_webapp.app import app as webapp              # noqa: E402
+from core import config                                      # noqa: E402
 
-_client = TestClient(webapp)
+# Use the real demo host so probes' "is this the bundled demo app?" check
+# (core.probes.web._is_demo_target, keyed on config.DEMO_HOST) recognizes this
+# TestClient fixture as the demo app, exactly as it would in the real deployment.
+_client = TestClient(webapp, base_url=f"http://{config.DEMO_HOST}")
 _base = str(_client.base_url)
 
 
@@ -265,8 +269,16 @@ def test_injection_probes_use_the_target_url_own_param():
         assert not any("/search" in u or ("/products?" in u and "products.php" not in u)
                        for u in h.urls), (pid, h.urls)
 
-    # No query string at all -> falls back to the bundled demo paths so the
-    # probes still work against the built-in vulnerable-webapp target.
+    # No query string on a REAL (non-demo) target -> no guessed demo path; the
+    # probe must honestly report there's no parameter to inject into, rather
+    # than hitting a hardcoded /products?id= that doesn't exist on this site.
     no_param = "https://demo.local/dashboard"
-    h = _H(); REGISTRY["sql_injection"].execute(no_param, h)
-    assert h.urls[0].startswith("https://demo.local/products?id=")
+    h = _H(); recs = REGISTRY["sql_injection"].execute(no_param, h)
+    assert h.urls == [] and recs[0].success is False and "no query parameter" in recs[0].rationale.lower()
+
+    # No query string on the BUNDLED demo webapp -> still falls back to the
+    # known demo path, so the probes work out of the box against it.
+    from core import config
+    demo_url = f"http://{config.DEMO_HOST}/dashboard"
+    h = _H(); REGISTRY["sql_injection"].execute(demo_url, h)
+    assert h.urls and h.urls[0].startswith(f"http://{config.DEMO_HOST}/products?id=")
