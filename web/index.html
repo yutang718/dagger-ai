@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dagger-AI · LLM Red-Team Console</title>
-<link rel="stylesheet" href="/static/styles.css">
+<title>Dagger-AI · Red-Team Console</title>
+<link rel="stylesheet" href="/static/styles.css?v=1.7.8">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🗡️</text></svg>">
 </head>
 <body>
@@ -12,41 +12,47 @@
 <div id="login" class="login-wrap">
   <form id="login-form" class="login-card">
     <div class="brand"><span class="dagger">🗡️</span> Dagger-AI</div>
-    <div class="subtitle">LLM Red-Team Console</div>
+    <div class="subtitle" id="l-subtitle">AI Red-Team Console</div>
     <input id="l-user" placeholder="username" autocomplete="username" value="admin">
     <input id="l-pass" type="password" placeholder="password" autocomplete="current-password">
-    <button type="submit">Sign in</button>
+    <button type="submit" id="l-signin">Sign in</button>
     <div id="login-err" class="err"></div>
-    <div class="legal">For authorized testing of AI systems you own or have written permission to assess.</div>
+    <div class="legal" id="l-legal"></div>
+    <div class="login-lang" id="l-lang"></div>
   </form>
 </div>
 
 <!-- App -->
 <div id="app" class="app hidden">
-  <aside class="sidebar">
+  <header class="topbar">
     <div class="brand"><span class="dagger">🗡️</span> Dagger-AI</div>
     <nav>
-      <a data-view="dashboard" class="active">▚ Dashboard</a>
-      <a data-view="targets">◎ Targets</a>
-      <a data-view="campaigns">⚔ Campaigns</a>
-      <a data-view="runs">⟳ Runs</a>
+      <a data-view="dashboard" class="active"><span data-i18n="nav.dashboard"></span></a>
+      <a data-view="targets"><span data-i18n="nav.targets"></span></a>
+      <a data-view="campaigns"><span data-i18n="nav.campaigns"></span></a>
+      <a data-view="verify"><span data-i18n="nav.verify"></span></a>
+      <a data-view="runs"><span data-i18n="nav.runs"></span></a>
+      <a data-view="monitor"><span data-i18n="nav.monitor"></span></a>
+      <a data-view="settings"><span data-i18n="nav.settings"></span></a>
     </nav>
-    <div class="side-foot">
+    <div class="top-controls">
       <div id="attacker-mode" class="pill"></div>
-      <div class="ver">v<span id="ver"></span></div>
-      <a id="logout" class="logout">Sign out</a>
+      <div class="seg" id="seg-lang"></div>
+      <select class="topsel" id="sel-theme" aria-label="Theme"></select>
+      <select class="topsel" id="sel-font" aria-label="Font"></select>
+      <span class="ver">v<span id="ver"></span></span>
+      <a id="logout" class="logout" data-i18n="side.signout"></a>
     </div>
-  </aside>
-
-  <main id="main">
-    <!-- views injected here -->
-  </main>
+  </header>
+  <main id="main"></main>
 </div>
 
 <div id="drawer" class="drawer hidden"><div class="drawer-body" id="drawer-body"></div></div>
 <div id="toast" class="toast hidden"></div>
 
-<script src="/static/graph.js?v=1.2.0"></script>
-<script src="/static/app.js?v=1.2.0"></script>
+<script src="/static/i18n.js?v=1.7.8"></script>
+<script src="/static/theme.js?v=1.7.8"></script>
+<script src="/static/graph.js?v=1.7.8"></script>
+<script src="/static/app.js?v=1.7.8"></script>
 </body>
 </html>

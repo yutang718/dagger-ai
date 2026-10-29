@@ -1,82 +1,71 @@
-/* Self-contained SVG attack-chain graph (no external library, works offline).
-   Columns: Target -> Probes -> Attempts. Successful attempts glow in their
-   severity colour; click an attempt to open its step-by-step trail. */
+/* Attack kill-chain (self-contained, offline, theme-aware).
+
+   A VERTICAL timeline: Target at the top, then each phase as a full-width row —
+   a dot on a connecting rail, the phase name + finding count, and the ACTION
+   cards for that phase wrapping across the available width (each coloured by its
+   STATUS). Flows top→bottom so nothing runs off the right edge; it uses the full
+   width and grows downward. Click a card to open its step trail. */
 (function (global) {
-  const SVGNS = "http://www.w3.org/2000/svg";
-  const SEV = {critical:"#e5484d",high:"#f76808",medium:"#f5a623",low:"#3b82f6",info:"#8b8d98"};
+  const PHASE_SEQ = ["plan", "recon", "fingerprint", "discovery", "vuln", "exploit", "validate", "report"];
+  const SEV = {critical:"var(--crit)", high:"var(--high)", medium:"var(--med)",
+               low:"var(--low)", info:"var(--info)"};
+  const esc = s => (s ?? "").toString().replace(/[&<>"]/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
-  function el(tag, attrs, parent) {
-    const n = document.createElementNS(SVGNS, tag);
-    for (const k in attrs) n.setAttribute(k, attrs[k]);
-    if (parent) parent.appendChild(n);
-    return n;
-  }
-
-  function curve(x1, y1, x2, y2) {
-    const mx = (x1 + x2) / 2;
-    return `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
-  }
-
-  function node(svg, x, y, w, h, fill, stroke, label, sub, onclick) {
-    const g = el("g", {class: "gnode"}, svg);
-    el("rect", {x:x-w/2, y:y-h/2, width:w, height:h, rx:10, fill, stroke,
-      "stroke-width":1.5}, g);
-    const t = el("text", {x, y:y-2, "text-anchor":"middle", "font-weight":"700"}, g);
-    t.textContent = label;
-    if (sub) {
-      const s = el("text", {x, y:y+13, "text-anchor":"middle", fill:"#8b97ab",
-        "font-size":"10"}, g);
-      s.textContent = sub;
-    }
-    if (onclick) g.addEventListener("click", onclick);
-    return g;
-  }
-
-  function render(container, data, onAttempt) {
-    container.innerHTML = "";
+  function render(container, data, onNode) {
     const attempts = data.attempts || [];
-    const W = container.clientWidth || 900;
-    const probes = {};
-    attempts.forEach(a => { (probes[a.probe] ||= []).push(a); });
-    const probeIds = Object.keys(probes);
-    const rowH = 64;
-    const H = Math.max(360, attempts.length * rowH + 60);
-    const svg = el("svg", {width:"100%", height:H, viewBox:`0 0 ${W} ${H}`}, container);
+    const tl = data.techLabel || (x => x);
+    const pl = data.phaseLabel || (x => x);
 
-    const xT = 95, xP = W * 0.42, xA = W - 150;
-    const yMid = H / 2;
+    const groups = {};
+    attempts.forEach(a => { const k = a.phase || a.probe || "steps"; (groups[k] = groups[k] || []).push(a); });
+    const keys = Object.keys(groups).sort((a, b) => {
+      const ia = PHASE_SEQ.indexOf(a), ib = PHASE_SEQ.indexOf(b);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+    });
+    if (!keys.length) { container.innerHTML = `<div class="chain-empty">${esc(data.emptyLabel || "—")}</div>`; return; }
 
-    // target node
-    const tgt = node(svg, xT, yMid, 150, 46, "#1a2740", "#5b8cff",
-      "🎯 Target", data.targetName || "AI system", null);
+    const row = (dotColor, headHtml, actsHtml) => `
+      <div class="vrow">
+        <div class="vrail"><span class="vdot" style="background:${dotColor}"></span></div>
+        <div class="vbody">${headHtml}${actsHtml || ""}</div>
+      </div>`;
 
-    // position attempts first (even spacing), probes at mean of their attempts
-    let i = 0;
-    const attemptY = {};
-    attempts.forEach(a => { attemptY[a.id] = 40 + (i + 0.5) * ((H - 60) / attempts.length); i++; });
+    let html = `<div class="vchain">`;
+    // target
+    html += row("var(--accent)",
+      `<div class="vhead vtarget">◎ <b>${esc(data.targetName || "Target")}</b>
+        ${data.endpoint ? `<span class="vep mono">${esc(data.endpoint)}</span>` : ""}</div>`, "");
 
-    // edges + probe nodes
-    probeIds.forEach(pid => {
-      const ys = probes[pid].map(a => attemptY[a.id]);
-      const py = ys.reduce((s,v)=>s+v,0)/ys.length;
-      el("path", {class:"gedge", d:curve(xT+75, yMid, xP-70, py)}, svg);
-      node(svg, xP, py, 140, 40, "#131824", "#2a3550",
-        probes[pid][0].owasp || "probe", pid.replace(/_/g," "), null);
-      probes[pid].forEach(a => {
-        const ay = attemptY[a.id];
-        const ok = a.success;
-        el("path", {class:"gedge"+(ok?" ok":""), d:curve(xP+70, py, xA-85, ay)}, svg);
-        const col = ok ? SEV[a.severity]||SEV.info : "#1a2130";
-        const stroke = ok ? SEV[a.severity]||SEV.info : "#2a3550";
-        const g = node(svg, xA, ay, 170, 44, ok? shade(col):"#131824", stroke,
-          (ok?"✔ ":"· ")+a.technique.slice(0,16), ok?("CVSS "+(a.score*10).toFixed(1)):"resisted",
-          () => onAttempt && onAttempt(a));
-        if (ok) el("circle", {cx:xA+78, cy:ay-14, r:5, fill:col}, g);
-      });
+    keys.forEach(k => {
+      const items = groups[k];
+      const hits = items.filter(a => a.success).length;
+      const worst = items.reduce((w, a) => (a.success && _sev(a.severity) > _sev(w)) ? a.severity : w, "info");
+      const dot = hits ? (SEV[worst] || SEV.info) : "var(--line)";
+      const head = `<div class="vhead"><span>${esc(pl(k))}</span>
+        <span class="vcount">${hits ? `<b style="color:var(--crit)">${hits}⚑</b>`
+                                    : `<span class="no">${items.length}</span>`}</span></div>`;
+      const acts = `<div class="vacts">` + items.map(a => {
+        const col = a.success ? (SEV[a.severity] || SEV.info) : "var(--line)";
+        const cdot = a.success ? (SEV[a.severity] || SEV.info) : "var(--muted)";
+        const st = a.success ? (data.findingLabel || "finding") : (data.cleanLabel || "clean");
+        return `<div class="chain-act${a.success ? " ok" : ""}" data-att="${a.id}"
+            style="border-color:${col}" title="${esc(tl(a.technique))}">
+            <span class="cdot" style="background:${cdot}"></span>
+            <span class="cact-body"><span class="cact-name">${esc(tl(a.technique))}</span>
+              <span class="cact-st" style="color:${a.success ? col : "var(--muted)"}">${esc(st)}</span></span>
+          </div>`;
+      }).join("") + `</div>`;
+      html += row(dot, head, acts);
+    });
+    html += `</div>`;
+    container.innerHTML = html;
+    container.querySelectorAll(".chain-act[data-att]").forEach(el => el.onclick = () => {
+      const a = attempts.find(x => String(x.id) === el.dataset.att);
+      if (a && onNode) onNode([a], a.phase);
     });
   }
-
-  function shade(hex){ return hex+"22"; }
+  const _sev = s => ({critical:5, high:4, medium:3, low:2, info:1}[s] || 0);
 
   global.AttackGraph = { render };
 })(window);

@@ -11,40 +11,114 @@ platform is fully functional out of the box.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 from typing import Optional
 
 import httpx
 
-from . import config
+from . import config, pricing
+
+
+class UsageMeter:
+    """Accumulates token usage across the LLM calls of one engagement so the
+    console can show tokens used and an estimated USD cost."""
+
+    def __init__(self):
+        self.calls = 0
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+        self.by_model: dict[str, dict] = {}
+
+    def add(self, model: str, prompt_tokens: int, completion_tokens: int):
+        self.calls += 1
+        self.prompt_tokens += prompt_tokens
+        self.completion_tokens += completion_tokens
+        m = self.by_model.setdefault(model or "(default)",
+                                     {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0})
+        m["calls"] += 1
+        m["prompt_tokens"] += prompt_tokens
+        m["completion_tokens"] += completion_tokens
+
+    def as_dict(self) -> dict:
+        total_cost = 0.0
+        models = {}
+        for model, u in self.by_model.items():
+            c = pricing.cost_usd(model, u["prompt_tokens"], u["completion_tokens"])
+            total_cost += c
+            models[model] = {**u, "cost_usd": round(c, 6)}
+        return {
+            "calls": self.calls,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "total_tokens": self.prompt_tokens + self.completion_tokens,
+            "cost_usd": round(total_cost, 6),
+            "by_model": models,
+        }
+
+
+# Per-engagement meter, scoped to the running thread's context.
+_METER: contextvars.ContextVar[Optional[UsageMeter]] = contextvars.ContextVar("llm_meter", default=None)
+
+
+def new_meter() -> UsageMeter:
+    m = UsageMeter()
+    _METER.set(m)
+    return m
+
+
+def _record(model: str, prompt_tokens: int, completion_tokens: int):
+    m = _METER.get()
+    if m is not None:
+        m.add(model, int(prompt_tokens or 0), int(completion_tokens or 0))
 
 
 class LLMClient:
-    def __init__(self, provider: str, base_url: str, api_key: str, model: str):
+    def __init__(self, provider: str, base_url: str, api_key: str, model: str,
+                 api_version: str = ""):
         self.provider = provider
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
+        self.api_version = (api_version or "").strip()  # Azure only
+        self.last_error = ""   # populated on a failed complete() for diagnostics
 
     @classmethod
     def attacker(cls) -> "LLMClient":
-        return cls(config.ATTACKER_PROVIDER, config.ATTACKER_BASE_URL,
-                   config.ATTACKER_API_KEY, config.ATTACKER_MODEL)
+        # Runtime console config (Settings page) takes precedence over the env
+        # defaults so the operator can bring/switch their own LLM live.
+        from . import settings
+        cfg = settings.llm_config()
+        return cls(cfg["provider"], cfg["base_url"], cfg["api_key"], cfg["model"],
+                   cfg.get("api_version", ""))
 
     @property
     def online(self) -> bool:
-        return self.provider in ("openai", "anthropic") and bool(self.api_key or self.base_url)
+        return self.provider in ("openai", "anthropic", "azure") and bool(self.api_key or self.base_url)
 
     def complete(self, system: str, user: str, temperature: float = 0.9) -> str:
         """Single-shot completion. Returns '' on offline/failure so callers can
-        fall back to their deterministic path."""
+        fall back to their deterministic path. On failure, self.last_error holds
+        a human-readable reason (including the provider's response body) so the
+        Settings 'test connection' can show what actually went wrong."""
         if not self.online:
             return ""
+        self.last_error = ""
         try:
             if self.provider == "anthropic":
                 return self._anthropic(system, user, temperature)
+            if self.provider == "azure":
+                return self._azure(system, user, temperature)
             return self._openai(system, user, temperature)
-        except Exception:
+        except Exception as e:
+            detail = f"{type(e).__name__}: {e}"
+            resp = getattr(e, "response", None)
+            if resp is not None:
+                try:
+                    detail += " — " + (resp.text or "")[:400]
+                except Exception:
+                    pass
+            self.last_error = detail
             return ""
 
     def _openai(self, system: str, user: str, temperature: float) -> str:
@@ -63,7 +137,46 @@ class LLMClient:
         with httpx.Client(timeout=config.REQUEST_TIMEOUT) as c:
             r = c.post(f"{base}/chat/completions", headers=headers, json=payload)
             r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"]
+            data = r.json()
+            u = data.get("usage") or {}
+            _record(self.model, u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
+            return data["choices"][0]["message"]["content"]
+
+    # Azure OpenAI uses api-key auth, the deployment in the URL path, and a
+    # required api-version. `base_url` is the resource endpoint
+    # (https://<resource>.openai.azure.com) OR a full chat-completions URL;
+    # `model` is the deployment name. api-version can be given in base_url's
+    # query string, else a current stable default is used.
+    _AZURE_API_VERSION = "2024-10-21"
+
+    def _azure(self, system: str, user: str, temperature: float) -> str:
+        from urllib.parse import urlsplit, parse_qs
+        base = self.base_url
+        # Precedence: the explicit api-version field, then one in the URL, then default.
+        ver = self.api_version \
+            or (parse_qs(urlsplit(base).query).get("api-version") or [None])[0] \
+            or self._AZURE_API_VERSION
+        if "/chat/completions" in base:          # user pasted the full deployment URL
+            url = base
+            if "api-version=" not in url:
+                url += ("&" if "?" in url else "?") + "api-version=" + ver
+        else:                                     # build from resource host + deployment
+            host = base.split("/openai/")[0].rstrip("/")
+            deployment = self.model or "gpt-4o"
+            url = f"{host}/openai/deployments/{deployment}/chat/completions?api-version={ver}"
+        headers = {"Content-Type": "application/json", "api-key": self.api_key}
+        payload = {
+            "temperature": temperature,
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": user}],
+        }
+        with httpx.Client(timeout=config.REQUEST_TIMEOUT) as c:
+            r = c.post(url, headers=headers, json=payload)
+            r.raise_for_status()
+            data = r.json()
+            u = data.get("usage") or {}
+            _record(self.model, u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
+            return data["choices"][0]["message"]["content"]
 
     def _anthropic(self, system: str, user: str, temperature: float) -> str:
         base = self.base_url or "https://api.anthropic.com/v1"
@@ -82,7 +195,10 @@ class LLMClient:
         with httpx.Client(timeout=config.REQUEST_TIMEOUT) as c:
             r = c.post(f"{base}/messages", headers=headers, json=payload)
             r.raise_for_status()
-            return "".join(b.get("text", "") for b in r.json().get("content", []))
+            data = r.json()
+            u = data.get("usage") or {}
+            _record(self.model, u.get("input_tokens", 0), u.get("output_tokens", 0))
+            return "".join(b.get("text", "") for b in data.get("content", []))
 
     def complete_json(self, system: str, user: str) -> Optional[dict]:
         raw = self.complete(system, user, temperature=0.2)
