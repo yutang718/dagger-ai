@@ -15,17 +15,34 @@ and runs inside the isolated tools container.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import ssl
 import subprocess
+import tempfile
 import time
+import urllib.request
 import xml.etree.ElementTree as ET
+from urllib.parse import urljoin, urlparse
 
 MAX_OUT = 8000
 
 
 def _which(bin_):
     return shutil.which(bin_) is not None
+
+
+def _targets_file(options):
+    """When options carries a `targets` list (discovered endpoints/pages), write
+    it to a temp file and return the path for a tool's -l flag; else None."""
+    ts = [t for t in ((options or {}).get("targets") or []) if t]
+    if not ts:
+        return None
+    f = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False)
+    f.write("\n".join(ts[:60]))
+    f.close()
+    return f.name
 
 
 def _cookie_args(tool, options):
@@ -110,9 +127,18 @@ def nmap(target, options=None, timeout=240):
 def httpx(target, options=None, timeout=120):
     if not _which("httpx"):
         return _result("httpx", "httpx", available=False)
-    cmd = ["httpx", "-u", target, "-json", "-silent", "-title", "-tech-detect",
+    tfile = _targets_file(options)
+    src = ["-l", tfile] if tfile else ["-u", target]
+    cmd = ["httpx"] + src + ["-json", "-silent", "-title", "-tech-detect",
            "-status-code", "-web-server", "-no-color"] + _cookie_args("httpx", options)
-    rc, out, ms, err = _run(cmd, timeout)
+    try:
+        rc, out, ms, err = _run(cmd, timeout)
+    finally:
+        if tfile:
+            try:
+                os.remove(tfile)
+            except OSError:
+                pass
     obs, findings = [], []
     for line in (out or "").splitlines():
         line = line.strip()
@@ -135,8 +161,17 @@ def nuclei(target, options=None, timeout=600):
     if not _which("nuclei"):
         return _result("nuclei", "nuclei", available=False)
     sev = (options or {}).get("severity", "low,medium,high,critical")
-    cmd = ["nuclei", "-u", target, "-jsonl", "-silent", "-no-color", "-severity", sev] + _cookie_args("nuclei", options)
-    rc, out, ms, err = _run(cmd, timeout)
+    tfile = _targets_file(options)
+    src = ["-l", tfile] if tfile else ["-u", target]
+    cmd = ["nuclei"] + src + ["-jsonl", "-silent", "-no-color", "-severity", sev] + _cookie_args("nuclei", options)
+    try:
+        rc, out, ms, err = _run(cmd, timeout)
+    finally:
+        if tfile:
+            try:
+                os.remove(tfile)
+            except OSError:
+                pass
     findings, obs = [], []
     for line in (out or "").splitlines():
         line = line.strip()
@@ -550,8 +585,105 @@ def gitsecrets(target, options=None, timeout=300):
         _sh.rmtree(d, ignore_errors=True)
 
 
+# --------------------------------------- jsendpoints (SPA backend + page discovery)
+_SCRIPT_SRC = re.compile(r'<script[^>]+src=["\']([^"\']+)["\']', re.I)
+_LINK_JS = re.compile(r'<link[^>]+href=["\']([^"\']+\.js[^"\']*)["\']', re.I)
+_HREF = re.compile(r'<a[^>]+href=["\']([^"\']+)["\']', re.I)
+# backend endpoints: /api, /v1, graphql, *.php/.asp/.jsp/.do/.action, etc.
+_EP = re.compile(
+    r"""["'`](?P<u>"""
+    r"""(?:https?:)?//[^"'`\s<>]+\.[a-z]{2,}[^"'`\s<>]*"""           # absolute URL
+    r"""|/(?:api|rest|graphql|service|services|ajax|backend|admin|data|gateway|open|portal|v\d+)"""
+    r"""[\w\-./?=&%{}:+]*"""                                          # api-ish path
+    r"""|[\w\-./]+\.(?:php|asp|aspx|jsp|do|action)(?:\?[^"'`]*)?"""   # backend file
+    r""")["'`]""", re.I | re.X)
+# generic in-app paths (frontend routes / pages)
+_PATH = re.compile(r"""["'`](/[\w\-./]{1,100})["'`]""")
+_STATIC = (".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico",
+           ".woff", ".woff2", ".ttf", ".eot", ".map", ".mp4", ".mp3", ".pdf", ".json")
+_BACKEND_RE = re.compile(r"\.php|\.asp|\.aspx|\.jsp|\.do|\.action|/api/|/api$|/v\d+/|/graphql|/rest/|/ajax/", re.I)
+
+
+def _fetch(url, cookies, timeout=20, cap=800000):
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    req = urllib.request.Request(url, headers={"User-Agent": "Dagger-AI/jsdisc"})
+    if cookies:
+        req.add_header("Cookie", cookies)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+            return r.read(cap).decode("utf-8", "replace")
+    except Exception:
+        return ""
+
+
+def jsendpoints(target, options=None, timeout=180):
+    """Discover a SPA's backend endpoints and frontend pages by parsing its HTML
+    and JS bundles (stdlib only — no external binary). Returns discovered URLs so
+    the operator can scan the real backend attack surface behind the frontend."""
+    cookies = (options or {}).get("cookies", "")
+    base = target
+    host = (urlparse(base).hostname or "")
+    html = _fetch(base, cookies)
+    # JS bundle URLs (same host only — don't fetch arbitrary third-party scripts)
+    js_urls = []
+    for m in _SCRIPT_SRC.findall(html) + _LINK_JS.findall(html):
+        ju = urljoin(base, m)
+        if ".js" in ju.lower() and (urlparse(ju).hostname or "") in ("", host):
+            js_urls.append(ju)
+    js_urls = list(dict.fromkeys(js_urls))[:15]
+    corpus = html
+    for ju in js_urls:
+        c = _fetch(ju, cookies)
+        if c:
+            corpus += "\n" + c
+    # extract candidate strings
+    raw = set(_EP.findall(corpus)) | set(_PATH.findall(corpus))
+    endpoints, pages = set(), set()
+    for e in raw:
+        e = (e or "").strip()
+        if not e or e.startswith("data:") or e.startswith("#") or "{" in e or "}" in e or " " in e:
+            continue
+        # resolve to absolute
+        if e.startswith("//"):
+            ae = "https:" + e
+        elif e.startswith("http"):
+            ae = e
+        else:
+            ae = urljoin(base, e)
+        p = urlparse(ae)
+        if not p.hostname or (host and p.hostname != host):
+            continue  # keep same-host only
+        low = ae.lower().split("?")[0]
+        if _BACKEND_RE.search(ae):
+            endpoints.add(ae)
+        elif not any(low.endswith(ext) for ext in _STATIC):
+            pages.add(ae)
+    endpoints = sorted(endpoints)[:80]
+    pages = sorted(pages)[:80]
+    obs = [f"[endpoint] {e}" for e in endpoints] + [f"[page] {e}" for e in pages]
+    findings = []
+    if endpoints:
+        findings.append({
+            "title": f"Backend endpoints discovered from JS ({len(endpoints)})",
+            "severity": "info", "owasp": "", "mitre": "T1595.003",
+            "evidence": "; ".join(endpoints[:25]),
+            "description": "API / backend endpoints extracted from the SPA's HTML and JS bundles — the "
+                           "real attack surface behind the frontend, where PHP/framework code runs.",
+            "remediation": "Review these endpoints for authz/input validation; point vulnerability "
+                           "scans at them (the operator tests them with the built-in web probes)."})
+    res = _result("jsendpoints", f"jsendpoints {base} (js:{len(js_urls)})", 0,
+                  "\n".join(obs)[:MAX_OUT], 0, findings, obs[:120])
+    res["endpoints"] = endpoints
+    res["pages"] = pages
+    return res
+
+
 # tools whose binary name differs from the registry key
 BINARIES = {"testssl": "testssl", "gitsecrets": "git-dumper"}
+# pure-python tools (no external binary) — always available
+PY_TOOLS = {"jsendpoints"}
 
 REGISTRY = {
     "nmap": nmap, "httpx": httpx, "nuclei": nuclei, "ffuf": ffuf,
@@ -559,8 +691,10 @@ REGISTRY = {
     "subfinder": subfinder, "katana": katana, "wafw00f": wafw00f, "sslscan": sslscan,
     "nikto": nikto, "dalfox": dalfox, "commix": commix,
     "gau": gau, "arjun": arjun, "testssl": testssl, "wpscan": wpscan, "gitsecrets": gitsecrets,
+    "jsendpoints": jsendpoints,
 }
 
 
 def available_tools():
-    return {name: _which(BINARIES.get(name, name)) for name in REGISTRY}
+    return {name: (True if name in PY_TOOLS else _which(BINARIES.get(name, name)))
+            for name in REGISTRY}

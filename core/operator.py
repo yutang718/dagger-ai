@@ -31,6 +31,7 @@ MODULES = {
     "tls_sslscan":         ("fingerprint", "sslscan"),
     "discovery_ffuf":      ("discovery",   "ffuf"),
     "crawl_katana":        ("discovery",   "katana"),
+    "endpoints_js":        ("discovery",   "jsendpoints"),
     "urls_gau":            ("discovery",   "gau"),
     "params_arjun":        ("discovery",   "arjun"),
     "vuln_nuclei":         ("vuln",        "nuclei"),
@@ -54,6 +55,7 @@ MODULE_META = {
     "tls_sslscan": ("sslscan TLS/SSL analysis", "sslscan"),
     "discovery_ffuf": ("ffuf content discovery", "ffuf"),
     "crawl_katana": ("Katana crawl / URL discovery", "katana"),
+    "endpoints_js": ("JS endpoint & page discovery", "jsendpoints"),
     "urls_gau": ("gau historical URL discovery", "gau"),
     "params_arjun": ("arjun hidden-parameter discovery", "arjun"),
     "vuln_nuclei": ("Nuclei vulnerability scan", "nuclei"),
@@ -159,6 +161,9 @@ def _playbook_engagement(client, url, host, selected, allow_internal, max_steps,
         tgt = host if tool == "nmap" else url
         res = tools_client.run(tool, tgt, allow_internal=allow_internal, cookies=cookies)
         _emit(attempts, _attempt_from_tool(mod, phase, res, lang), on_attempt)
+        if tool == "jsendpoints":   # scan the discovered backend surface
+            for sa in _scan_discovered(res, allow_internal, lang, cookies):
+                _emit(attempts, sa, on_attempt)
 
     # ---- auto-verify EVERY discovered vuln (not just PHP) ----
     for a in _exploit_verification(url, attempts, lang, cookies):
@@ -468,6 +473,31 @@ def _interpret(client, mod, res, lang="en") -> str:
     return out.strip()
 
 
+def _scan_discovered(res, allow_internal, lang="en", cookies=""):
+    """Actively scan the endpoints/pages that jsendpoints discovered: fingerprint
+    them (httpx — may reveal PHP / X-Powered-By on the real backend) and vuln-scan
+    them (nuclei, with its PHP/CVE templates). This is how we reach the backend
+    attack surface that a SPA hides behind its frontend."""
+    disc = list(dict.fromkeys((res.get("endpoints") or []) + (res.get("pages") or [])))[:50]
+    if not disc:
+        return []
+    zh = lang == "zh"
+    out = []
+    hres = tools_client.run("httpx", disc[0], options={"targets": disc},
+                            allow_internal=allow_internal, cookies=cookies)
+    ha = _attempt_from_tool("probe_httpx", "fingerprint", hres, lang)
+    ha.technique = (f"httpx 指纹：已发现的 {len(disc)} 个接口/页面" if zh
+                    else f"httpx fingerprint of {len(disc)} discovered endpoints/pages")
+    out.append(ha)
+    nres = tools_client.run("nuclei", disc[0], options={"targets": disc},
+                            allow_internal=allow_internal, cookies=cookies)
+    na = _attempt_from_tool("vuln_nuclei", "vuln", nres, lang)
+    na.technique = (f"Nuclei 扫描：已发现的 {len(disc)} 个接口/页面" if zh
+                    else f"Nuclei scan of {len(disc)} discovered endpoints/pages")
+    out.append(na)
+    return out
+
+
 def _run_module(mod, url, host, allow_internal, reason, client=None, lang="en", cookies=""):
     """Run one module, attaching the LLM's reasoning for choosing it (as a step
     note) and a plain-language conclusion of the output (as the rationale)."""
@@ -489,6 +519,10 @@ def _run_module(mod, url, host, allow_internal, reason, client=None, lang="en", 
             a.rationale = f"Rationale: {reason} | " + (a.rationale or "")
         out = [a]
         hits = len(res.get("findings", []) or [])
+        if tool == "jsendpoints":   # scan the discovered backend surface
+            for sa in _scan_discovered(res, allow_internal, lang, cookies):
+                out.append(sa)
+                hits += len((sa.findings or []))
     return out, hits
 
 

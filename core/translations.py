@@ -67,6 +67,7 @@ MODULE_ZH = {
     "tls_sslscan": "sslscan TLS/SSL 分析",
     "discovery_ffuf": "ffuf 内容发现",
     "crawl_katana": "Katana 爬取 / URL 发现",
+    "endpoints_js": "JS 接口 / 页面发现",
     "urls_gau": "gau 历史 URL 发现",
     "params_arjun": "arjun 隐藏参数发现",
     "vuln_nuclei": "Nuclei 漏洞扫描",
