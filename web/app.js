@@ -702,7 +702,8 @@ function feedHtml(events){
     <div class="fev ${a.success?"ok":""}">
       <div class="fh"><span>${kindBadge(a)} ${phaseChip(a)} <span class="mono">${esc(techLabel(a.technique))}</span></span>
         <span>${st.latency_ms||0} ms ${a.success?`· <b style="color:var(--crit)">${t("monitor.exploited")}</b>`:""}</span></div>
-      <div class="fp">${esc((a.rationale||st.response||st.prompt||"").slice(0,180))}</div></div>`).join("");
+      <div class="fp">${esc((a.rationale||st.response||st.prompt||"").slice(0,180))}</div>
+      ${a.success&&isExploit(a)&&impactOf(a)?`<div class="fimp">▶ ${esc(impactOf(a))}</div>`:""}</div>`).join("");
 }
 
 /* ---------- settings (LLM config) ---------- */
@@ -791,6 +792,7 @@ function openAttempt(a){
       ${a.phase?`<span class="tag">${esc(phaseLabel(a.phase))}</span>`:""}
       ${a.owasp?`<span class="tag">${a.owasp}</span>`:""}${a.atlas?`<span class="tag">${a.atlas}</span>`:""}
       <span class="tag">score ${(a.score*10).toFixed(1)}</span></div>
+    ${isExploit(a)?exploitCard(a):""}
     <p class="no" style="font-size:13px"><b>${t("attempt.objective")}:</b> ${esc(a.objective)}</p>
     ${a.rationale?`<div class="lab" style="margin-top:12px">${t("attempt.conclusion")}</div>
       <div class="conclusion">${esc(a.rationale)}</div>`:""}
@@ -843,6 +845,73 @@ function phaseChip(a){
   if(!a.phase) return "";
   const col=a.success?(_SEVVAR[a.severity]||"var(--info)"):"var(--muted)";
   return `<span class="pchip"><span class="pdot" style="background:${col}"></span>${esc(phaseLabel(a.phase))}</span>`;
+}
+
+/* ---------- exploit verification: readable "what / payload / result / effect" ----------
+   Turns a raw attempt into a human-readable card answering: what vuln, what
+   payload was sent, what came back, and what an attacker could actually do. */
+const IMPACT = {   // generic "what it enables" by OWASP class (en/zh)
+  A01:{en:"Access or act on other users' data and functions without authorization.",zh:"越权访问或操作其他用户的数据与功能。"},
+  A02:{en:"Read or tamper with data that should be protected by cryptography.",zh:"读取或篡改本应被加密保护的数据。"},
+  A03:{en:"Inject code or commands the server runs — often full remote code execution.",zh:"注入由服务器执行的代码或命令——通常可达远程代码执行。"},
+  A04:{en:"Abuse an insecure design to reach unintended, high-impact states.",zh:"利用不安全设计到达非预期的高危状态。"},
+  A05:{en:"Leverage a misconfiguration to widen access or leak internals.",zh:"借助配置错误扩大访问面或泄露内部信息。"},
+  A06:{en:"Exploit a known-vulnerable component via its public CVE.",zh:"针对已知漏洞组件,利用其公开 CVE。"},
+  A07:{en:"Authenticate as another user or bypass the login controls.",zh:"冒充他人身份或绕过登录控制。"},
+  A08:{en:"Tamper with data or updates whose integrity is never verified.",zh:"篡改未经完整性校验的数据或更新。"},
+  A09:{en:"Act without being logged, hindering detection and response.",zh:"行动不被记录,妨碍检测与响应。"},
+  A10:{en:"Make the server reach internal-only systems on your behalf (SSRF).",zh:"迫使服务器代为访问仅限内部的系统(SSRF)。"},
+};
+const IMPACT_CVE = {   // concrete effect for specific CVEs
+  "CVE-2024-4577":{en:"Run arbitrary system commands on the server (PHP-CGI RCE) — full server takeover.",zh:"在服务器上执行任意系统命令(PHP-CGI RCE)——可完全接管服务器。"},
+  "CVE-2021-41773":{en:"Read any file the web server can reach — /etc/passwd, source code, secrets.",zh:"读取 Web 服务可访问的任意文件——/etc/passwd、源码、密钥等。"},
+  "CVE-2021-42013":{en:"Read any server-side file, and on some builds execute commands.",zh:"读取服务端任意文件,部分版本下还可执行命令。"},
+};
+function cveOf(a){
+  const m=((a.technique||"")+" "+(a.objective||"")+" "+(a.evidence||"")+" "+(a.rationale||""))
+          .match(/CVE-\d{4}-\d{3,7}/i);
+  return m?m[0].toUpperCase():"";
+}
+function impactOf(a){
+  const L=zh()?"zh":"en", cve=cveOf(a);
+  if(cve && IMPACT_CVE[cve]) return IMPACT_CVE[cve][L];
+  const tq=(a.technique||"").toLowerCase();
+  if(tq.includes("sql"))                      return zh()?"读取或篡改数据库中的任意数据(数据泄露)。":"Read or modify arbitrary database data (data breach).";
+  if(tq.includes("shell")||tq.includes("cmd")||tq.includes("command")) return zh()?"在服务器上执行任意系统命令。":"Execute arbitrary OS commands on the server.";
+  if(tq.includes("template"))                 return zh()?"通过模板引擎执行代码(常可达 RCE)。":"Execute code through the template engine (often RCE).";
+  if(tq.includes("xss")||tq.includes("marker"))return zh()?"在受害者浏览器中执行脚本,劫持其会话。":"Run script in a victim's browser and hijack their session.";
+  if(tq.includes("idor")||tq.includes("enum"))return zh()?"枚举并读取其他用户的私密数据。":"Enumerate and read other users' private data.";
+  if(tq.includes("ssrf")||tq.includes("metadata"))return zh()?"迫使服务器访问内部服务或云元数据。":"Force the server to reach internal services or cloud metadata.";
+  return (IMPACT[a.owasp]||{})[L] || "";
+}
+function payloadOf(a){
+  const req=(a.steps||[]).find(s=>s.role==="request"||s.role==="attack")||null;
+  return req ? (req.prompt||"") : "";
+}
+function resultOf(a){
+  if(a.evidence) return a.evidence;
+  const req=(a.steps||[]).find(s=>s.role==="request")||((a.steps||[])[0]||{});
+  return (req.response||"").slice(0,220);
+}
+function isExploit(a){
+  if(["plan","report","validate"].includes(a.phase)) return false;
+  if((a.technique||"").startsWith("verify:")) return true;
+  if(a.phase==="exploit") return true;
+  return (a.steps||[]).some(s=>s.role==="request");
+}
+function exploitCard(a){
+  const cve=cveOf(a), imp=impactOf(a), pay=payloadOf(a), res=resultOf(a), ok=a.success;
+  return `<div class="vcard ${ok?'ok':'no'}">
+    <div class="vrow"><div class="vk">${t("vc.vuln")}</div><div class="vv">
+       <b>${esc(techLabel(a.probe||a.technique))}</b>
+       <span class="badge sev-${a.severity}">${sevLabel(a.severity)}</span>
+       ${cve?`<span class="tag">${cve}</span>`:""}${a.owasp?`<span class="tag">${a.owasp}</span>`:""}</div></div>
+    ${pay?`<div class="vrow"><div class="vk">${t("vc.payload")}</div><div class="vv"><pre class="pay">${esc(pay)}</pre></div></div>`:""}
+    <div class="vrow"><div class="vk">${t("vc.result")}</div><div class="vv">
+       <span class="rslt ${ok?'ok':'no'}">${ok?("✔ "+t("vc.confirmed")):("✘ "+t("vc.notconf"))}</span>
+       ${res?`<pre class="pay">${esc(res)}</pre>`:""}</div></div>
+    ${imp?`<div class="vrow"><div class="vk">${t("vc.impact")}</div><div class="vv imp">${esc(imp)}</div></div>`:""}
+  </div>`;
 }
 
 /* ---------- start ---------- */

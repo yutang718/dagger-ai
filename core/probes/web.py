@@ -22,8 +22,14 @@ def _req(http, method, url, note, **kw):
     """Perform a request; return (step, resp_or_None)."""
     start = time.time()
     line = f"{method} {url}"
-    if kw.get("data"):
-        line += f"\nbody: {kw['data']}"
+    body = kw.get("data")
+    if body is None and kw.get("content") is not None:
+        c = kw["content"]
+        body = c.decode("utf-8", "replace") if isinstance(c, (bytes, bytearray)) else c
+    if body is None and kw.get("json") is not None:
+        body = kw["json"]
+    if body:
+        line += f"\nbody: {body}"
     try:
         r = http.request(method, url, **kw)
         ms = int((time.time() - start) * 1000)
