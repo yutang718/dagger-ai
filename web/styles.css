@@ -232,9 +232,9 @@ tr:hover td{background:var(--panel2)}
   display:flex;gap:5px;align-items:flex-start;line-height:1.4}
 
 /* exploit verification card: what / payload / result / effect */
-.vcard{border:1px solid var(--line);border-left:3px solid var(--muted);border-radius:10px;
+.vcard{border:1px solid var(--line);border-radius:10px;
   background:var(--panel2);padding:4px 0;margin:12px 0}
-.vcard.ok{border-left-color:var(--crit)}
+.vcard.ok{border-color:color-mix(in srgb,var(--crit) 40%,var(--line))}
 .vrow{display:grid;grid-template-columns:116px 1fr;gap:10px;padding:8px 13px;
   border-top:1px solid var(--line)}
 .vrow:first-child{border-top:none}
