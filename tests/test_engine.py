@@ -240,3 +240,33 @@ def test_php_fingerprint_banner_independent():
     assert php[0].success and "phpsessid" in php[0].evidence.lower()
     catchall = p.execute("http://t/", _H({"_default": _R(200, {"Set-Cookie": "session=1"})}))
     assert catchall[0].success is False
+
+
+def test_injection_probes_use_the_target_url_own_param():
+    # When the target URL already carries a query parameter (a real endpoint
+    # like ?category=1), the injection probes must inject into THAT parameter
+    # instead of a hardcoded demo path like /products?id= or /search?q= — those
+    # paths don't exist on a real site and just 404/502.
+    from core.probes.base import REGISTRY
+    import core.probes.web
+
+    class _R:
+        def __init__(s, status=200, text="ok"): s.status_code=status; s.text=text; s.headers={}
+    class _H:
+        def __init__(s): s.urls=[]
+        def request(s, method, url, **kw):
+            s.urls.append(url); return _R()
+
+    real_url = "https://example.com/products.php?category=electronics"
+    for pid in ("sql_injection", "command_injection", "reflected_xss", "ssti"):
+        h = _H()
+        REGISTRY[pid].execute(real_url, h)
+        assert all("products.php" in u and "category=" in u for u in h.urls), (pid, h.urls)
+        assert not any("/search" in u or ("/products?" in u and "products.php" not in u)
+                       for u in h.urls), (pid, h.urls)
+
+    # No query string at all -> falls back to the bundled demo paths so the
+    # probes still work against the built-in vulnerable-webapp target.
+    no_param = "https://demo.local/dashboard"
+    h = _H(); REGISTRY["sql_injection"].execute(no_param, h)
+    assert h.urls[0].startswith("https://demo.local/products?id=")

