@@ -217,6 +217,7 @@ async function viewTargets() {
         <td style="text-align:right">
           <button class="sm ghost" data-report="${x.id}">${t("targets.report")}</button>
           <button class="sm ghost" data-prof="${x.id}">${t("targets.bom")}</button>
+          <button class="sm ghost" data-edit="${x.id}">${t("common.edit")}</button>
           ${x.authorized?"":`<button class="sm ghost" data-auth="${x.id}">${t("common.authorize")}</button>`}
           <button class="sm danger" data-del="${x.id}">${t("common.delete")}</button></td></tr>`).join("")}
       </tbody></table>`: `<div class="empty">${t("targets.empty")}</div>`}
@@ -231,6 +232,7 @@ async function viewTargets() {
   main().querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{
     await api("/targets/"+b.dataset.del,{method:"DELETE"}); viewTargets(); });
   main().querySelectorAll("[data-auth]").forEach(b=>b.onclick=()=>authorizeForm(b.dataset.auth));
+  main().querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>targetForm(ts.find(x=>x.id==b.dataset.edit)));
   main().querySelectorAll("[data-prof]").forEach(b=>b.onclick=()=>openProfile(b.dataset.prof));
   main().querySelectorAll("[data-report]").forEach(b=>b.onclick=()=>openReport(b.dataset.report));
 }
@@ -346,8 +348,9 @@ async function openProfile(id){
     ${sec(t("bom.endpoints"),chips(p.endpoints))}`);
 }
 
-function targetForm() {
-  openDrawer(`<h2>${t("targetForm.title")}</h2>
+function targetForm(existing) {
+  const ed = existing && existing.id;
+  openDrawer(`<h2>${ed?t("targetForm.editTitle"):t("targetForm.title")}</h2>
     <label>${t("form.type")}</label>
     <select id="t-kind">
       <option value="host">${t("form.kindHost")}</option>
@@ -364,7 +367,7 @@ function targetForm() {
       <label>${t("form.respPath")} <span class="no">${t("form.respHint")}</span></label>
       <input id="t-path" value="choices.0.message.content">
     </div>
-    <div class="row" style="margin-top:18px"><button id="t-save">${t("common.create")}</button>
+    <div class="row" style="margin-top:18px"><button id="t-save">${ed?t("common.save"):t("common.create")}</button>
       <button class="ghost" onclick="closeDrawer()">${t("common.cancel")}</button></div>`);
   const sync=()=>{ const k=$("#t-kind").value; const chat=k==="http_chat";
     $("#chat-fields").style.display=chat?"block":"none";
@@ -372,15 +375,25 @@ function targetForm() {
       : k==="web_app" ? t("form.baseUrl") : t("form.endpoint");
     $("#t-ep").placeholder = k==="host" ? t("form.hostPh")
       : k==="web_app" ? "https://app.example.com" : "https://host/v1/chat/completions"; };
+  if(ed){   // prefill from the existing target
+    $("#t-kind").value = existing.kind; $("#t-name").value = existing.name||"";
+    $("#t-ep").value = existing.endpoint||"";
+    if($("#t-method")) $("#t-method").value = existing.http_method||"POST";
+    if($("#t-body")) $("#t-body").value = existing.body_template||"";
+    if($("#t-path")) $("#t-path").value = existing.response_path||"";
+  }
   $("#t-kind").onchange=sync; sync();
   $("#t-save").onclick = async () => {
     const chat=$("#t-kind").value==="http_chat";
-    try{ await api("/targets",{method:"POST",body:JSON.stringify({
+    const body = {
       name:$("#t-name").value, kind:$("#t-kind").value, endpoint:$("#t-ep").value,
       http_method: chat?$("#t-method").value:"GET",
       body_template: chat?$("#t-body").value:"",
-      response_path: chat?$("#t-path").value:"" })});
-      closeDrawer(); viewTargets(); toast(t("toast.targetCreated")); }
+      response_path: chat?$("#t-path").value:"" };
+    try{
+      await api(ed?`/targets/${existing.id}`:"/targets",
+                {method: ed?"PATCH":"POST", body:JSON.stringify(body)});
+      closeDrawer(); viewTargets(); toast(ed?t("toast.targetUpdated"):t("toast.targetCreated")); }
     catch(e){ toast(e.message); }
   };
 }
@@ -412,9 +425,11 @@ async function viewCampaigns() {
         <td>${(c.probes||[]).map(p=>`<span class="tag">${p}</span>`).join(" ")}</td>
         <td>${esc(strategyLabel(c.orchestrator))}</td>
         <td style="text-align:right"><button class="sm" data-run="${c.id}">▶ ${t("common.run")}</button>
+          <button class="sm ghost" data-edit="${c.id}">${t("common.edit")}</button>
           <button class="sm danger" data-del="${c.id}">${t("common.delete")}</button></td></tr>`).join("")}
       </tbody></table>`:`<div class="empty">${t("campaigns.empty")}</div>`}</div>`;
   $("#new-camp").onclick = () => campaignForm(ts);
+  main().querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>campaignForm(ts, cs.find(c=>c.id==b.dataset.edit)));
   main().querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{
     await api("/campaigns/"+b.dataset.del,{method:"DELETE"}); viewCampaigns(); });
   main().querySelectorAll("[data-run]").forEach(b=>b.onclick=async()=>{
@@ -423,20 +438,21 @@ async function viewCampaigns() {
     catch(e){ toast("⚠ "+e.message); }});
 }
 
-function campaignForm(ts){
+function campaignForm(ts, existing){
   if(!ts.length){ toast(t("toast.addTarget")); return; }
+  const ed = existing && existing.id;
   const strat = Object.keys(S.meta.strategies).map(k=>`<option value="${k}">${esc(strategyLabel(k))}</option>`).join("");
   const topts = ts.map(x=>`<option value="${x.id}" data-kind="${x.kind}">${esc(x.name)}${x.authorized?"":t("notAuthorized")}</option>`).join("");
-  openDrawer(`<h2>${t("campaignForm.title")}</h2>
+  openDrawer(`<h2>${ed?t("campaignForm.editTitle"):t("campaignForm.title")}</h2>
     <label>${t("campaignForm.name")}</label><input id="c-name" placeholder="${t("campaignForm.namePh")}">
-    <label>${t("campaignForm.target")}</label><select id="c-target">${topts}</select>
+    <label>${t("campaignForm.target")}</label><select id="c-target" ${ed?"disabled":""}>${topts}</select>
     <div id="strat-wrap"><label>${t("campaignForm.strategy")}</label><select id="c-strat">${strat}</select>
     <label>${t("campaignForm.maxTurns")}</label><input id="c-turns" type="number" value="4" min="1" max="8"></div>
     <label>${t("campaignForm.cookies")} <span class="no" style="font-weight:400">${t("campaignForm.cookiesHint")}</span></label>
     <textarea id="c-cookies" rows="3" placeholder="${t("campaignForm.cookiesPh")}" style="font-family:var(--mono);font-size:12px"></textarea>
     <label>${t("campaignForm.probes")} <span id="probe-domain" class="no"></span></label>
     <div id="probe-list" style="display:grid;gap:8px"></div>
-    <div class="row" style="margin-top:18px"><button id="c-save">${t("campaignForm.create")}</button>
+    <div class="row" style="margin-top:18px"><button id="c-save">${ed?t("common.save"):t("campaignForm.create")}</button>
       <button class="ghost" onclick="closeDrawer()">${t("common.cancel")}</button></div>`);
   const renderProbes=()=>{
     const opt=$("#c-target").selectedOptions[0];
@@ -467,16 +483,30 @@ function campaignForm(ts){
     $("#probe-list").querySelectorAll(".probe").forEach(p=>{ const cb=p.querySelector("input");
       const s=()=>p.classList.toggle("on",cb.checked); cb.onchange=s; s(); });
   };
-  $("#c-target").onchange=renderProbes; renderProbes();
+  if(ed){   // prefill from the existing campaign (target is fixed on edit)
+    $("#c-name").value = existing.name||"";
+    $("#c-target").value = existing.target_id;
+    if(existing.orchestrator) $("#c-strat").value = existing.orchestrator;
+    if(existing.max_turns) $("#c-turns").value = existing.max_turns;
+    $("#c-cookies").value = existing.session_cookies||"";
+  }
+  const applyChecks=()=>{ if(!ed) return;
+    $("#probe-list").querySelectorAll(".probe input").forEach(cb=>{
+      cb.checked=(existing.probes||[]).includes(cb.value); cb.dispatchEvent(new Event("change")); }); };
+  const render=()=>{ renderProbes(); applyChecks(); };
+  $("#c-target").onchange=render; render();
   $("#c-save").onclick = async () => {
     const chosen=[...$("#probe-list").querySelectorAll("input:checked")].map(i=>i.value);
     if(!chosen.length){ toast(t("toast.pickModule")); return; }
     const kind=($("#c-target").selectedOptions[0]||{}).dataset?.kind;
-    try{ await api("/campaigns",{method:"POST",body:JSON.stringify({
-      name:$("#c-name").value||"Untitled", target_id:+$("#c-target").value, probes:chosen,
+    const body={ name:$("#c-name").value||"Untitled", probes:chosen,
       orchestrator:$("#c-strat").value, session_cookies:$("#c-cookies").value||"",
-      max_turns: kind==="host" ? 12 : +($("#c-turns").value||4) })});
-      closeDrawer(); viewCampaigns(); toast(t("toast.campaignCreated")); }
+      max_turns: kind==="host" ? 12 : +($("#c-turns").value||4) };
+    if(!ed) body.target_id=+$("#c-target").value;
+    try{
+      await api(ed?`/campaigns/${existing.id}`:"/campaigns",
+                {method: ed?"PATCH":"POST", body:JSON.stringify(body)});
+      closeDrawer(); viewCampaigns(); toast(ed?t("toast.campaignUpdated"):t("toast.campaignCreated")); }
     catch(e){ toast(e.message); }
   };
 }

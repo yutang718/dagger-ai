@@ -61,6 +61,16 @@ class TargetIn(BaseModel):
     response_path: str = "reply"
 
 
+class TargetPatch(BaseModel):
+    name: str | None = None
+    kind: str | None = None
+    endpoint: str | None = None
+    http_method: str | None = None
+    headers: dict | None = None
+    body_template: str | None = None
+    response_path: str | None = None
+
+
 class AuthorizeIn(BaseModel):
     note: str
 
@@ -194,6 +204,24 @@ def list_targets(_: str = auth.auth_dep, db: Session = Depends(get_session)):
 def create_target(body: TargetIn, _: str = auth.auth_dep, db: Session = Depends(get_session)):
     t = Target(**body.model_dump())
     db.add(t); db.commit()
+    return _target_json(t)
+
+
+@app.patch("/api/targets/{tid}")
+def update_target(tid: int, body: TargetPatch, _: str = auth.auth_dep,
+                  db: Session = Depends(get_session)):
+    t = db.get(Target, tid)
+    if not t:
+        raise HTTPException(404, "target not found")
+    data = body.model_dump(exclude_unset=True)
+    # Authorization is granted for a specific endpoint; if the endpoint changes,
+    # revoke it so a re-authorization is required before the new host can be run.
+    if "endpoint" in data and data["endpoint"] != t.endpoint:
+        t.authorized = False
+        t.authorization_note = ""
+    for k, v in data.items():
+        setattr(t, k, v)
+    db.commit()
     return _target_json(t)
 
 
