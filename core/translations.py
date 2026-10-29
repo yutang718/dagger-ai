@@ -58,6 +58,10 @@ PROBE_ZH = {
     "php_fingerprint": ("PHP 指纹（不依赖响应头）",
                         "现代 PHP 默认 expose_php=Off，响应头不暴露版本/身份。此探针用行为特征判断 PHP："
                         "会话 Cookie 名（PHPSESSID、laravel_session、ci_session 等）、.php 处理行为、框架指纹路径。"),
+    "cve_2026_109618": ("PHP2Shell RCE (CVE-2026-109618 / 109619)",
+                        "基于版本的 PHP2Shell 检测：CVE-2026-109618（内存破坏）/ CVE-2026-109619（释放后使用）是 "
+                        "PHP 核心 5.4–8.5.11 的严重未授权 RCE，正被在野利用。此探针仅从响应头识别 PHP 版本并标记"
+                        "易受攻击版本，不进行利用。修复：升级到 8.5.12/8.4.27/8.3.36/8.2.35 及以上。"),
 }
 
 # Pentest module Chinese names (keyed by module id from operator.MODULES).

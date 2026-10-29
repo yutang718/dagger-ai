@@ -589,3 +589,76 @@ class PHPFingerprint(WebProbe):
                                ". The PHP CVE / SQLi / SSTI probes and nuclei apply to it.")]
         return [AttemptRec("php-fingerprint", self.objective, steps, False, 0.0, "",
                            "No banner-independent PHP signal (hardened pretty-URL app, not PHP, or gated).")]
+
+
+@register
+class PHP2Shell(WebProbe):
+    """PHP2Shell (CVE-2026-109618 / CVE-2026-109619) — VERSION-BASED detection.
+
+    These are memory-corruption / use-after-free RCE bugs in core PHP (5.4–8.5.11),
+    critical and actively exploited (CISA KEV). There is no simple benign PoC: a
+    working check would be a full memory-corruption exploit, which this platform
+    deliberately does NOT build. This probe only fingerprints the PHP version from
+    response headers and flags vulnerable builds so you can patch.
+    """
+    id = "cve_2026_109618"
+    name = "PHP2Shell RCE (CVE-2026-109618 / 109619)"
+    owasp = "A06"
+    mitre = "T1190"
+    severity = "critical"
+    cves = ("CVE-2026-109618", "CVE-2026-109619")
+    objective = "Detect PHP builds vulnerable to PHP2Shell (CVE-2026-109618/109619) by version."
+    description = ("Version-based detection for PHP2Shell: CVE-2026-109618 (memory corruption during "
+                   "OOM handling) and CVE-2026-109619 (use-after-free across requests) — critical "
+                   "unauthenticated RCE in core PHP 5.4–8.5.11, under active exploitation. This probe "
+                   "reads the PHP version from response headers and flags vulnerable builds; it does NOT "
+                   "exploit the memory-corruption bug.")
+    remediation = ("Upgrade PHP to 8.5.12 / 8.4.27 / 8.3.36 / 8.2.35 or later (per branch). PHP 8.1 and "
+                   "older are EOL with no official fix — migrate. Target is actively exploited: review "
+                   "for compromise.")
+
+    _PATCHED = {(8, 5): 12, (8, 4): 27, (8, 3): 36, (8, 2): 35}
+
+    def _vuln(self, ver):
+        m = re.match(r"(\d+)\.(\d+)(?:\.(\d+))?", ver)
+        if not m:
+            return None
+        maj, mnr, pat = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
+        if maj < 8:
+            return True                       # 5.x / 7.x — all affected (EOL)
+        if maj == 8 and mnr <= 1:
+            return True                       # 8.0 / 8.1 — affected, no fix
+        fix = self._PATCHED.get((maj, mnr))
+        if fix is not None:
+            return pat < fix                  # 8.2–8.5 — vulnerable below the patch level
+        return False                          # 8.6+ / 9+ — not affected
+
+    def execute(self, base_url, http):
+        s, r = _req(http, "GET", base_url,
+                    "Read the PHP version from response headers (X-Powered-By / Server)")
+        steps = [s]
+        if r is None:
+            return [AttemptRec("php2shell-version", self.objective, steps, False, 0.0, "",
+                               "No response — could not assess PHP2Shell exposure.")]
+        h = {k.lower(): v for k, v in r.headers.items()}
+        banner = h.get("x-powered-by", "") + " " + h.get("server", "")
+        setck = " ".join(v for k, v in r.headers.items() if k.lower() == "set-cookie").lower()
+        m = re.search(r"php/(\d+\.\d+(?:\.\d+)?)", banner, re.I)
+        if m:
+            ver = m.group(1)
+            if self._vuln(ver):
+                return [AttemptRec("php2shell-version", self.objective, steps, True, 1.0,
+                                   "PHP/%s — within the PHP2Shell affected range (5.4–8.5.11)" % ver,
+                                   "VULNERABLE: PHP %s is affected by PHP2Shell (CVE-2026-109618/109619), "
+                                   "a critical unauthenticated RCE under active exploitation. Patch to "
+                                   "8.5.12/8.4.27/8.3.36/8.2.35+ immediately." % ver)]
+            return [AttemptRec("php2shell-version", self.objective, steps, False, 0.0, "PHP/%s" % ver,
+                               "PHP %s appears patched / outside the PHP2Shell affected range." % ver)]
+        if "phpsessid" in setck:
+            return [AttemptRec("php2shell-version", self.objective, steps, False, 0.0, "",
+                               "PHP detected (PHPSESSID) but the version is hidden (expose_php=Off), so "
+                               "PHP2Shell can't be confirmed from headers. Check the PHP version manually: "
+                               "if it is 5.4–8.5.11 it is vulnerable (critical, actively exploited). This "
+                               "probe does not exploit the bug.")]
+        return [AttemptRec("php2shell-version", self.objective, steps, False, 0.0, "",
+                           "No PHP version banner and no PHP signal — PHP2Shell not determinable here.")]

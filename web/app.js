@@ -513,8 +513,9 @@ function campaignForm(ts, existing){
 
 /* ---------- targeted single-vuln verify ---------- */
 async function viewVerify(){
-  const ts = await api("/targets");
+  const [ts, cs] = await Promise.all([api("/targets"), api("/campaigns")]);
   const webProbes = (S.meta.probes||[]).filter(p=>p.category==="web");
+  const campCk = {}; cs.forEach(c=>{ if(c.session_cookies && !campCk[c.target_id]) campCk[c.target_id]=c.session_cookies; });
   const topts = ts.map(x=>`<option value="${x.id}">${esc(x.name)}${x.authorized?"":t("notAuthorized")}</option>`).join("");
   const vopts = webProbes.map(p=>`<option value="${p.id}">${esc(probeName(p))}${p.owasp?` (${p.owasp})`:""}</option>`).join("");
   main().innerHTML = `
@@ -524,16 +525,30 @@ async function viewVerify(){
       <label>${t("verify.vuln")}</label><select id="v-probe">${vopts}</select>
       <label>${t("verify.url")} <span class="no">${t("verify.urlHint")}</span></label>
       <input id="v-url" placeholder="${t("verify.urlPh")}">
-      <label>${t("verify.cookie")} <span class="no">${t("verify.cookieHint")}</span></label>
+      <label>${t("verify.cookie")} <span class="no">${t("verify.cookieHint")}</span>
+        <a id="v-ck-clear" class="no" style="float:right;cursor:pointer">${t("verify.cookieClear")}</a></label>
       <textarea id="v-cookie" rows="2" style="font-family:var(--mono);font-size:12px"></textarea>
+      <div id="v-ck-src" class="no" style="font-size:11px;min-height:13px"></div>
       <div class="row" style="margin-top:14px"><button id="v-run">${t("verify.run")}</button></div>
     </div>
     <div id="v-result" style="max-width:900px;margin-top:16px">${ts.length?"":`<div class="empty">${t("verify.noTarget")}</div>`}</div>`;
+  // remember the cookie per target (localStorage), falling back to the campaign's cookie
+  const ckKey = id => "dagger.ck."+id;
+  const lsGet = id => { try{ return localStorage.getItem(ckKey(id))||""; }catch(e){ return ""; } };
+  const lsSet = (id,v) => { try{ v?localStorage.setItem(ckKey(id),v):localStorage.removeItem(ckKey(id)); }catch(e){} };
+  const fillCookie = () => {
+    const id=$("#v-target").value, saved=lsGet(id), camp=campCk[id]||"";
+    $("#v-cookie").value = saved || camp;
+    $("#v-ck-src").textContent = saved ? t("verify.ckRemembered") : (camp ? t("verify.ckFromCampaign") : "");
+  };
+  $("#v-target").onchange=fillCookie; fillCookie();
+  $("#v-ck-clear").onclick = () => { lsSet($("#v-target").value,""); $("#v-cookie").value=campCk[$("#v-target").value]||""; fillCookie(); };
   const btn = $("#v-run");
   if(btn) btn.onclick = async () => {
     btn.disabled=true; btn.textContent=t("verify.running");
     $("#v-result").innerHTML=`<div class="no" style="padding:12px 0">${t("verify.running")}</div>`;
     try{
+      lsSet($("#v-target").value, $("#v-cookie").value.trim());   // remember for next time
       const r = await api("/verify",{method:"POST",body:JSON.stringify({
         target_id:+$("#v-target").value, probe:$("#v-probe").value,
         url:$("#v-url").value.trim(), cookies:$("#v-cookie").value })});
