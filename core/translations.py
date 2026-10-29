@@ -49,7 +49,9 @@ PROBE_ZH = {
     "auth_failures": ("身份识别与认证失效", "用一小组默认凭据尝试登录端点。"),
     "ssti": ("服务端模板注入", "测试用户输入是否被服务端模板引擎执行（可致远程代码执行）。"),
     "cve_2024_4577": ("PHP-CGI 参数注入 (CVE-2024-4577)",
-                      "测试 PHP-CGI 参数注入 RCE（CVE-2024-4577）：以软连字符 %AD 注入 -d 指令并执行 PHP 载荷。"),
+                      "测试 PHP-CGI 参数注入 RCE（CVE-2024-4577）：以软连字符 %AD 注入 -d 指令并执行良性 PHP 载荷，通过服务端计算结果验证可被利用。"),
+    "cve_2021_41773": ("Apache 路径穿越 (CVE-2021-41773 / 42013)",
+                       "测试 Apache 2.4.49/2.4.50 路径穿越：以编码的 ../ 越出站点根目录，读取系统文件以验证（良性）。"),
 }
 
 # Pentest module Chinese names (keyed by module id from operator.MODULES).

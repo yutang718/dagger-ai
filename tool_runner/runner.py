@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import shutil
 import socket
+import subprocess
+import threading
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, Header, HTTPException
@@ -25,6 +28,24 @@ import tools
 
 app = FastAPI(title="Dagger-AI tool-runner")
 TOKEN = os.getenv("TOOL_RUNNER_TOKEN", "")
+
+
+@app.on_event("startup")
+def _refresh_nuclei_templates():
+    """Pull the latest nuclei templates in the background on every start, so
+    recent CVEs (e.g. new PHP CVEs) are detectable without rebuilding the image.
+    Non-blocking: the API is available immediately while templates update."""
+    if not shutil.which("nuclei"):
+        return
+
+    def _run():
+        try:
+            subprocess.run(["nuclei", "-update-templates", "-silent"],
+                           timeout=600, capture_output=True)
+        except Exception:
+            pass
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 class RunIn(BaseModel):
