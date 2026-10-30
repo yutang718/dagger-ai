@@ -56,7 +56,6 @@ def snapshot(tag: str = "startup") -> None:
 _ADDITIVE = {
     "targets": [("allow_internal", "BOOLEAN DEFAULT 0")],
     "attempts": [("phase", "VARCHAR(30) DEFAULT ''")],
-    "campaigns": [("session_cookies", "TEXT DEFAULT ''")],
 }
 
 
