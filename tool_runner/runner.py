@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import shutil
 import socket
+import subprocess
+import threading
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, Header, HTTPException
@@ -27,11 +30,30 @@ app = FastAPI(title="Dagger-AI tool-runner")
 TOKEN = os.getenv("TOOL_RUNNER_TOKEN", "")
 
 
+@app.on_event("startup")
+def _refresh_nuclei_templates():
+    """Pull the latest nuclei templates in the background on every start, so
+    recent CVEs (e.g. new PHP CVEs) are detectable without rebuilding the image.
+    Non-blocking: the API is available immediately while templates update."""
+    if not shutil.which("nuclei"):
+        return
+
+    def _run():
+        try:
+            subprocess.run(["nuclei", "-update-templates", "-silent"],
+                           timeout=600, capture_output=True)
+        except Exception:
+            pass
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 class RunIn(BaseModel):
     tool: str
     target: str
     options: dict = {}
     allow_internal: bool = False
+    cookies: str = ""        # authenticated testing: Cookie header value
 
 
 def _host(target: str) -> str:
@@ -71,7 +93,10 @@ def run(body: RunIn, x_runner_token: str = Header(default="")):
     host = _host(body.target)
     if _is_internal(host) and not body.allow_internal:
         raise HTTPException(403, "refusing link-local/metadata/loopback target (safety gate)")
-    return fn(body.target, body.options)
+    opts = dict(body.options or {})
+    if body.cookies:
+        opts["cookies"] = body.cookies
+    return fn(body.target, opts)
 
 
 def _auth(token: str):

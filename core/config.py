@@ -43,6 +43,8 @@ ATTACKER_PROVIDER = _env("DAGGER_ATTACKER_PROVIDER", default="offline")  # offli
 ATTACKER_BASE_URL = _env("DAGGER_ATTACKER_BASE_URL", default="")
 ATTACKER_API_KEY = _env("DAGGER_ATTACKER_API_KEY", default="")
 ATTACKER_MODEL = _env("DAGGER_ATTACKER_MODEL", default="")
+# Azure OpenAI only: api-version (e.g. 2024-10-21). Blank uses the client default.
+ATTACKER_API_VERSION = _env("DAGGER_ATTACKER_API_VERSION", default="")
 
 # --- safety / authorization gate ----------------------------------------
 # Dagger-AI only attacks systems the operator is authorized to test.
