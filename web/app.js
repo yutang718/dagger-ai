@@ -10,6 +10,43 @@ const esc = s => (s ?? "").toString().replace(/[&<>"]/g, c =>
   ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const zh = () => I18N.getLang() === "zh";
 
+/* ---------- safe markdown → HTML (for LLM-authored text) ----------
+   The operator/judge emit markdown (**bold**, lists, [severity] tags). We escape
+   first (never trust LLM output as HTML), then render a conservative subset so it
+   reads as a report instead of raw asterisks. */
+function mdInline(s) {
+  return s
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\[(critical|high|medium|low|info)\]/gi,
+             (_, g) => `<span class="badge sev-${g.toLowerCase()}">${g.toLowerCase()}</span>`)
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
+}
+function mdToHtml(src) {
+  const text = esc(src || "").trim();
+  if (!text) return "";
+  let html = "", list = null, para = [];
+  const closeList = () => { if (list) { html += `</${list}>`; list = null; } };
+  const flushPara = () => { if (para.length) { html += `<p>${mdInline(para.join(" "))}</p>`; para = []; } };
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/\s+$/, "");
+    if (!line.trim()) { flushPara(); closeList(); continue; }
+    let m;
+    if ((m = line.match(/^\s{0,3}(#{1,4})\s+(.*)$/))) {
+      flushPara(); closeList();
+      html += `<p class="md-h md-h${Math.min(m[1].length, 4)}">${mdInline(m[2])}</p>`;
+    } else if ((m = line.match(/^\s*[-*•]\s+(.*)$/))) {
+      flushPara(); if (list !== "ul") { closeList(); html += "<ul>"; list = "ul"; }
+      html += `<li>${mdInline(m[1])}</li>`;
+    } else if ((m = line.match(/^\s*\d+[.)]\s+(.*)$/))) {
+      flushPara(); if (list !== "ol") { closeList(); html += "<ol>"; list = "ol"; }
+      html += `<li>${mdInline(m[1])}</li>`;
+    } else { closeList(); para.push(line.trim()); }
+  }
+  flushPara(); closeList();
+  return html;
+}
+
 /* ---------- localized lookups over meta ---------- */
 const probeName = p => (zh() && p.name_zh) ? p.name_zh : p.name;
 const probeDesc = p => (zh() && p.description_zh) ? p.description_zh : p.description;
@@ -782,7 +819,7 @@ function playbookPanel(title, a){
   const s=(a.steps&&a.steps[0])||{};
   return `<div class="panel"><h3>${esc(title)} ${aiBadge()}</h3>
     ${s.note?`<div class="pb-note">${esc(s.note)}</div>`:""}
-    <div class="playbook">${esc(s.response||"")}</div></div>`;
+    <div class="md playbook">${mdToHtml(s.response||"")}</div></div>`;
 }
 const PHASE_ORDER=["recon","fingerprint","discovery","vuln","exploit"];
 function phaseGroups(as){
@@ -1024,7 +1061,7 @@ function openAttempt(a){
     ${isExploit(a)?exploitCard(a):""}
     <p class="no" style="font-size:13px"><b>${t("attempt.objective")}:</b> ${esc(a.objective)}</p>
     ${a.rationale?`<div class="lab" style="margin-top:12px">${t("attempt.conclusion")}</div>
-      <div class="conclusion">${esc(a.rationale)}</div>`:""}
+      <div class="md conclusion">${mdToHtml(a.rationale)}</div>`:""}
     ${a.evidence?`<div class="lab">${t("attempt.evidence")}</div><div class="evidence">${esc(a.evidence)}</div>`:""}
     <h3 style="margin-top:18px">${t("attempt.trail",{n:a.steps.length})}</h3>${steps}`);
 }
@@ -1035,10 +1072,10 @@ function openFinding(f){
     <div class="row" style="gap:8px;margin-bottom:12px">
       <span class="badge sev-${f.severity}">${sevLabel(f.severity)}</span>
       ${f.owasp?`<span class="tag">${f.owasp}</span>`:""}${f.atlas?`<span class="tag">${f.atlas}</span>`:""}</div>
-    <div class="lab">${t("finding.description")}</div><p style="font-size:13px;white-space:pre-wrap">${esc(f.description)}</p>
+    <div class="lab">${t("finding.description")}</div><div class="md">${mdToHtml(f.description)}</div>
     <div class="lab">${t("finding.evidence")}</div><div class="evidence">${esc(f.evidence)}</div>
     <div class="lab" style="margin-top:14px">${t("finding.remediation")}</div>
-    <p style="font-size:13px;white-space:pre-wrap">${esc(f.remediation)}</p>`);
+    <div class="md">${mdToHtml(f.remediation)}</div>`);
 }
 function openDrawer(html){ $("#drawer-body").innerHTML=html; $("#drawer").classList.remove("hidden"); }
 function closeDrawer(){ $("#drawer").classList.add("hidden"); }
