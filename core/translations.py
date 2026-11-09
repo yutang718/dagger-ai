@@ -81,6 +81,7 @@ MODULE_ZH = {
     "params_arjun": "arjun 隐藏参数发现",
     "vuln_nuclei": "Nuclei 漏洞扫描",
     "vuln_nikto": "Nikto Web 服务器扫描",
+    "dast_zap": "OWASP ZAP 自动化 DAST 扫描",
     "tls_testssl": "testssl.sh TLS 漏洞扫描",
     "cms_wpscan": "wpscan WordPress 扫描",
     "sqli_sqlmap": "sqlmap SQL 注入验证",

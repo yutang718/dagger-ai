@@ -13,7 +13,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # wheel for it, and the from-source build fails to link in this image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         nmap sqlmap whatweb ffuf seclists dnsutils theharvester \
-        nikto sslscan wafw00f commix arjun testssl.sh wpscan \
+        nikto sslscan wafw00f commix arjun testssl.sh wpscan zaproxy \
         golang-go git ca-certificates curl python3-pip \
         python3 python3-fastapi python3-uvicorn python3-pydantic \
     && rm -rf /var/lib/apt/lists/*

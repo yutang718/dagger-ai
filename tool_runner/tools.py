@@ -433,6 +433,54 @@ def nikto(target, options=None, timeout=300):
     return _result("nikto", cmd, rc, out, ms, findings[:30], obs[:60], error=err)
 
 
+# ----------------------------------------------------------- OWASP ZAP (DAST)
+_ZAP_RISK = {"high": "high", "medium": "medium", "low": "low",
+             "informational": "info", "info": "info"}
+
+
+def _strip_html(s):
+    return re.sub(r"<[^>]+>", "", s or "").strip()
+
+
+def zap(target, options=None, timeout=600):
+    """OWASP ZAP automated DAST: a headless spider + passive/quick-active scan of
+    the web app. Baseline-style (no credential brute / weaponization); alerts are
+    parsed from ZAP's JSON report into findings."""
+    binary = BINARIES.get("zap", "zaproxy")
+    if not _which(binary):
+        return _result("zap", binary, available=False)
+    out_json = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False).name
+    cmd = [binary, "-cmd", "-silent", "-quickurl", target,
+           "-quickout", out_json, "-quickprogress"]
+    rc, out, ms, err = _run(cmd, timeout)
+    findings, obs = [], []
+    try:
+        with open(out_json) as fh:
+            data = json.load(fh)
+    except Exception:  # noqa: BLE001
+        data = None
+    for site in ((data or {}).get("site") or []):
+        for a in (site.get("alerts") or []):
+            risk = (a.get("riskdesc", "") or "").split(" ")[0].lower()
+            sev = _ZAP_RISK.get(risk, "info")
+            name = a.get("alert") or a.get("name") or "ZAP alert"
+            inst = a.get("instances") or []
+            where = inst[0].get("uri", "") if inst else ""
+            cwe = a.get("cweid")
+            obs.append(f"[{sev}] {name}")
+            if sev in ("high", "medium", "low"):
+                findings.append({
+                    "title": "ZAP: " + name[:90], "severity": sev, "owasp": "", "mitre": "T1595",
+                    "evidence": (where or name)[:200] + (f"  (CWE-{cwe})" if cwe and str(cwe) != "-1" else ""),
+                    "description": _strip_html(a.get("desc", ""))[:300],
+                    "remediation": _strip_html(a.get("solution", ""))[:300] or "Review and remediate the ZAP finding."})
+    try:
+        os.remove(out_json)
+    except Exception:  # noqa: BLE001
+        pass
+    return _result("zap", cmd, rc, out, ms, findings[:40], obs[:80], error=err)
+
+
 # --------------------------------------------------------- dalfox (XSS exploit)
 def dalfox(target, options=None, timeout=240):
     if not _which("dalfox"):
@@ -726,7 +774,8 @@ def jsendpoints(target, options=None, timeout=180):
 
 
 # tools whose binary name differs from the registry key
-BINARIES = {"testssl": "testssl", "gitsecrets": "git-dumper", "theharvester": "theHarvester"}
+BINARIES = {"testssl": "testssl", "gitsecrets": "git-dumper", "theharvester": "theHarvester",
+            "zap": "zaproxy"}
 # pure-python tools (no external binary) — always available
 PY_TOOLS = {"jsendpoints"}
 
@@ -735,7 +784,7 @@ REGISTRY = {
     "whatweb": whatweb, "sqlmap": sqlmap,
     "subfinder": subfinder, "theharvester": theharvester, "dnsx": dnsx,
     "katana": katana, "wafw00f": wafw00f, "sslscan": sslscan,
-    "nikto": nikto, "dalfox": dalfox, "commix": commix,
+    "nikto": nikto, "zap": zap, "dalfox": dalfox, "commix": commix,
     "gau": gau, "arjun": arjun, "testssl": testssl, "wpscan": wpscan, "gitsecrets": gitsecrets,
     "jsendpoints": jsendpoints,
 }
