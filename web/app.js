@@ -493,55 +493,111 @@ async function openReport(id){
 function reportHtml(p, runs){
   const E=esc, sv=p.findings_by_sev||{}, order=["critical","high","medium","low","info"];
   const SEVC={critical:"#c62828",high:"#e65100",medium:"#f9a825",low:"#1565c0",info:"#616161"};
-  const sevChip=s=>`<span style="display:inline-block;padding:1px 8px;border-radius:12px;font-size:11px;font-weight:700;color:#fff;background:${SEVC[s]||'#616161'}">${E(sevLabel(s))}</span>`;
+  const sevChip=s=>`<span class="sc" style="background:${SEVC[s]||'#616161'}">${E(sevLabel(s))}</span>`;
   const total=Object.values(sv).reduce((a,b)=>a+b,0);
-  const sevSummary=order.filter(s=>sv[s]).map(s=>`${sevChip(s)} ${sv[s]}`).join("  ")||t("run.noFindings");
+  const worst=order.find(s=>sv[s])||null;
+
+  // Severity distribution: a proportional bar + a per-severity count table.
+  const sevBar=total?`<div class="bar">${order.filter(s=>sv[s]).map(s=>
+      `<span class="seg" style="flex:${sv[s]};background:${SEVC[s]}" title="${E(sevLabel(s))}: ${sv[s]}"></span>`).join("")}</div>
+    <table class="sg"><tbody>${order.filter(s=>sv[s]).map(s=>
+      `<tr><td>${sevChip(s)}</td><td class="n">${sv[s]}</td></tr>`).join("")}
+      <tr class="tot"><td>${t("report.totalFindings")}</td><td class="n">${total}</td></tr></tbody></table>`
+    :`<p class="ok">${t("run.noFindings")}</p>`;
+
+  // Executive summary: the operator's written analysis when present, else a
+  // deterministic sentence. Risk posture line keys off the worst severity.
+  const execProse=p.exec_summary?mdToHtml(p.exec_summary)
+    :`<p>${t("report.summaryText",{n:total,t:E(p.target.name)})}</p>`;
+  const posture=worst?`<div class="posture p-${worst}">${t("report.posture")}: <b>${E(sevLabel(worst))}</b></div>`:"";
+
+  // Findings — stable IDs (F-01…), severity, OWASP/ATLAS, evidence, remediation.
+  const pad=n=>String(n).padStart(2,"0");
   const vulns=(p.vulnerabilities||[]).map((v,i)=>`
     <div class="v">
-      <div class="vh">${i+1}. ${sevChip(v.severity)} <b>${E(v.title)}</b>
+      <div class="vh"><span class="fid">F-${pad(i+1)}</span> ${sevChip(v.severity)} <b>${E(v.title)}</b>
         ${v.count>1?`<span class="x">×${v.count}</span>`:""} ${v.owasp?`<span class="tg">${E(v.owasp)}</span>`:""}
         ${v.atlas?`<span class="tg">${E(v.atlas)}</span>`:""}</div>
       ${v.description?`<div class="vd">${E(v.description)}</div>`:""}
       ${v.evidence?`<div class="vl">${t("finding.evidence")}</div><pre>${E(v.evidence)}</pre>`:""}
       ${v.remediation?`<div class="vl">${t("finding.remediation")}</div><div class="vr">${E(v.remediation)}</div>`:""}
-    </div>`).join("")||`<p>${t("run.noFindings")}</p>`;
+    </div>`).join("")||`<p class="ok">${t("run.noFindings")}</p>`;
+
   const row=(k,val)=>val&&val.length?`<tr><th>${E(k)}</th><td>${Array.isArray(val)?val.map(E).join("、"):E(val)}</td></tr>`:"";
   const comps=(p.components||[]).map(c=>`${c.name}${c.version?" "+c.version:""}`);
   const ports=(p.ports||[]).map(x=>`${x.port}/${x.proto} ${x.service}${x.product?" ("+x.product+")":""}`);
+
+  // Scope & authorization.
+  const tg=p.target||{}, authed=tg.authorized;
+  const windowTxt=p.first_seen?E(fmtDate(p.first_seen))+(p.last_seen&&p.last_seen!==p.first_seen?" – "+E(fmtDate(p.last_seen)):"")
+    :(p.last_seen?E(fmtDate(p.last_seen)):"—");
+  const ref=`DA-${tg.id||"?"}-${new Date().toISOString().slice(0,10).replace(/-/g,"")}`;
+  const scope=`<table>
+    ${row(t("col.name"),tg.name)}${row(t("report.scopeKind"),tg.kind)}${row(t("col.endpoint"),p.endpoint)}
+    <tr><th>${t("report.scopeAuthorized")}</th><td>${authed?`<span class="ok-tag">✔ ${t("report.authorizedYes")}</span>`:`<span class="no-tag">✘ ${t("report.authorizedNo")}</span>`}</td></tr>
+    ${row(t("report.scopeNote"),tg.authorization_note)}${row(t("report.window"),windowTxt)}
+    ${row(t("bom.engagements"),String(p.runs))}</table>`;
+
+  // Methodology — kill-chain phases actually exercised.
+  const phases=(p.phases||[]);
+  const methodology=phases.length
+    ?`<div class="chips">${phases.map(ph=>`<span class="ph">${E(phaseLabel(ph))}</span>`).join("")}</div>
+      <p class="note">${t("report.methodologyText")}</p>`
+    :`<p class="note">${t("report.methodologyText")}</p>`;
+
   const timeline=runs.length?`<table class="tl"><thead><tr><th>${t("col.run")}</th><th>${t("col.status")}</th>
       <th>${t("col.attempts")}</th><th>${t("col.successes")}</th><th>${t("col.worst")}</th><th>${t("col.started")}</th></tr></thead><tbody>
       ${runs.map(r=>{const s=r.summary||{};return `<tr><td>#${r.id}</td><td>${E(statusLabel(r.status))}</td>
         <td>${s.attempts??"—"}</td><td>${s.successes??"—"}</td><td>${s.worst?E(sevLabel(s.worst)):"—"}</td>
         <td>${E(fmtDate(r.started_at))}</td></tr>`;}).join("")}</tbody></table>`:`<p>—</p>`;
+
   return `<!doctype html><html lang="${I18N.getLang()}"><head><meta charset="utf-8">
     <title>${t("report.title")} — ${E(p.target.name)}</title><style>
     *{box-sizing:border-box}body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
       color:#1a1a1a;max-width:860px;margin:0 auto;padding:40px 32px;line-height:1.55;font-size:14px}
     h1{font-size:24px;margin:0 0 4px}h2{font-size:16px;margin:28px 0 10px;border-bottom:2px solid #eee;padding-bottom:6px}
+    .conf{background:#fbeaea;border:1px solid #f0c7c7;color:#a5302a;font-size:11px;font-weight:700;letter-spacing:.06em;
+      text-transform:uppercase;text-align:center;border-radius:6px;padding:6px 10px;margin:0 0 16px}
     .meta{color:#666;font-size:13px;margin-bottom:6px}.sum{background:#f6f8fa;border:1px solid #e3e8ee;border-radius:8px;padding:14px 16px;margin:10px 0}
+    .sum p{margin:0 0 8px}.sum p:last-child{margin-bottom:0}
+    .posture{display:inline-block;font-size:13px;font-weight:600;border-radius:6px;padding:4px 10px;margin:2px 0 10px;background:#eef1f5}
+    .p-critical{background:#fbeaea;color:#c62828}.p-high{background:#fdeee0;color:#e65100}.p-medium{background:#fdf6e3;color:#b58900}
+    .p-low{background:#e8f0fb;color:#1565c0}.p-info{background:#eef1f5;color:#555}
+    .bar{display:flex;height:14px;border-radius:7px;overflow:hidden;margin:4px 0 10px}.seg{display:block}
     table{width:100%;border-collapse:collapse;margin:6px 0}th,td{text-align:left;padding:7px 9px;border-bottom:1px solid #eee;font-size:13px;vertical-align:top}
-    th{color:#555;width:150px;font-weight:600}.tl th{width:auto}
+    th{color:#555;width:160px;font-weight:600}.tl th,.sg th{width:auto}.sg{max-width:260px}.sg .n{text-align:right;font-variant-numeric:tabular-nums}
+    .sg .tot td{font-weight:700;border-top:1px solid #ddd}
     .v{border:1px solid #e3e8ee;border-radius:8px;padding:12px 14px;margin:10px 0}.vh{font-size:14px}.vh b{margin:0 4px}
+    .fid{font-family:monospace;font-size:12px;font-weight:700;color:#3b63e0;margin-right:4px}
+    .sc{display:inline-block;padding:1px 8px;border-radius:12px;font-size:11px;font-weight:700;color:#fff}
     .vd{color:#444;font-size:13px;margin:7px 0}.vl{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#888;margin:8px 0 3px}
     .vr{font-size:13px}.x,.tg{display:inline-block;background:#eef1f5;border-radius:5px;padding:1px 6px;font-size:11px;color:#555;font-family:monospace}
+    .chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}.ph{background:#eef1f5;border-radius:5px;padding:2px 9px;font-size:12px;color:#444}
+    .note{color:#666;font-size:12px;margin:6px 0 0}.ok{color:#1a7f37}.ok-tag{color:#1a7f37;font-weight:600}.no-tag{color:#c62828;font-weight:600}
+    .md-h{font-weight:700;margin:8px 0 2px}.sum ul,.sum ol{margin:4px 0 8px 20px;padding:0}.sum li{margin:2px 0}
     pre{background:#f6f8fa;border:1px solid #e3e8ee;border-radius:6px;padding:9px;font-size:12px;white-space:pre-wrap;word-break:break-word;margin:0}
+    code{background:#eef1f5;border-radius:4px;padding:1px 4px;font-size:12px}
     .noprint{margin:18px 0}button{padding:8px 16px;border:none;border-radius:7px;background:#3b63e0;color:#fff;font-weight:600;cursor:pointer}
-    @media print{.noprint{display:none}body{padding:0}}
+    @media print{.noprint{display:none}body{padding:0;max-width:none}.v,.sum{break-inside:avoid}}
     </style></head><body>
     <div class="noprint"><button onclick="window.print()">${t("report.print")}</button></div>
+    <div class="conf">${t("report.classification")}</div>
     <h1>${t("report.title")}</h1>
     <div class="meta"><b>${E(p.target.name)}</b> · ${E(p.endpoint||"—")}</div>
-    <div class="meta">${t("report.generated")}: ${E(new Date().toLocaleString(zh()?"zh-CN":undefined))} ·
-      ${p.runs} ${t("bom.engagements")}${p.last_seen?" · "+t("report.lastScan")+": "+E(fmtDate(p.last_seen)):""}</div>
+    <div class="meta">${t("report.ref")}: ${ref} · ${t("report.generated")}: ${E(new Date().toLocaleString(zh()?"zh-CN":undefined))}</div>
+    <h2>${t("report.scope")}</h2>${scope}
     <h2>${t("report.summary")}</h2>
-    <div class="sum">${t("report.summaryText",{n:total,t:E(p.target.name)})}<div style="margin-top:8px">${sevSummary}</div></div>
-    <h2>${t("profile.vulns")} (${(p.vulnerabilities||[]).length})</h2>${vulns}
+    ${posture}
+    <div class="sum">${execProse}</div>
+    <div class="vl">${t("report.sevDist")}</div>${sevBar}
+    <h2>${t("report.findings")} (${(p.vulnerabilities||[]).length})</h2>${vulns}
+    <h2>${t("report.methodology")}</h2>${methodology}
     <h2>${t("profile.assets")}</h2>
     <table>${row(t("bom.webServer"),p.web_servers&&p.web_servers.length?p.web_servers:p.powered_by)}
       ${row(t("bom.os"),p.os)}${row(t("bom.ports"),ports)}${row(t("bom.components"),comps)}
       ${row(t("bom.paths")+" ("+(p.paths||[]).length+")",(p.paths||[]).slice(0,40))}${row(t("bom.endpoints"),p.endpoints)}</table>
     <h2>${t("report.timeline")}</h2>${timeline}
-    <div class="meta" style="margin-top:30px;border-top:1px solid #eee;padding-top:12px">Dagger-AI · ${t("login.legal")}</div>
+    <div class="meta" style="margin-top:30px;border-top:1px solid #eee;padding-top:12px">Dagger-AI · ${E(ref)} · ${t("login.legal")}</div>
     </body></html>`;
 }
 

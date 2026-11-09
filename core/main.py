@@ -282,8 +282,12 @@ def target_profile(tid: int, _: str = auth.auth_dep, db: Session = Depends(get_s
     run_ids = [r for r in db.scalars(select(Run.id).where(Run.campaign_id.in_(camp_ids)))] if camp_ids else []
     blobs, findings, sev = [], [], {}
     vulns = {}
-    last = None
+    last = first = None
+    exec_summary = ""
+    phases = []
     _rank = {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}
+    _phase_rank = {"recon": 1, "fingerprint": 2, "discovery": 3, "vuln": 4,
+                   "vuln-scan": 4, "exploit": 5, "report": 6}
     _cls = lambda s: re.split(r"[:：—]", s or "")[0].strip()
     if run_ids:
         for (resp,) in db.execute(select(Step.response).join(Attempt, Step.attempt_id == Attempt.id)
@@ -310,6 +314,20 @@ def target_profile(tid: int, _: str = auth.auth_dep, db: Session = Depends(get_s
                               "atlas": f.atlas, "description": f.description,
                               "remediation": f.remediation, "evidence": f.evidence, "count": 1}
         last = db.scalar(select(func.max(Run.finished_at)).where(Run.id.in_(run_ids)))
+        first = db.scalar(select(func.min(Run.started_at)).where(Run.id.in_(run_ids)))
+        # Executive summary prose: the operator writes one per run (stored as the
+        # "report" step). Surface the most recent so the report reads as analysis,
+        # not just a finding count.
+        exec_summary = db.scalar(
+            select(Step.response).join(Attempt, Step.attempt_id == Attempt.id)
+            .where(Attempt.run_id.in_(run_ids), Step.role == "report",
+                   Step.response != "").order_by(Step.id.desc()).limit(1)) or ""
+        # Kill-chain phases actually exercised, for the methodology section.
+        seen = {p for (p,) in db.execute(
+            select(Attempt.phase).where(Attempt.run_id.in_(run_ids),
+                                        Attempt.phase != "").distinct()) if p}
+        seen.discard("report")  # the summary meta-phase, not a kill-chain phase
+        phases = sorted(seen, key=lambda p: _phase_rank.get(p, 99))
     prof = profile.build_profile(t.endpoint, blobs, findings)
     prof.update({
         "target": _target_json(t),
@@ -318,6 +336,9 @@ def target_profile(tid: int, _: str = auth.auth_dep, db: Session = Depends(get_s
         "findings_total": sum(sev.values()),
         "vulnerabilities": sorted(vulns.values(), key=lambda v: (_rank.get(v["severity"], 0), v["count"]),
                                   reverse=True),
+        "exec_summary": exec_summary,
+        "phases": phases,
+        "first_seen": first.isoformat() if first else None,
         "last_seen": last.isoformat() if last else None,
     })
     return prof
