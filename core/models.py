@@ -52,6 +52,10 @@ class Campaign(Base):
     probes = Column(JSON, default=list)       # list of probe ids
     orchestrator = Column(String(40), default="single_turn")
     max_turns = Column(Integer, default=6)
+    # Authenticated testing: session cookies for this campaign (one per line, or
+    # "name=value; name2=value2"). Injected as a Cookie header into web probes
+    # and the cookie-capable tool-runner tools so scans run logged-in.
+    session_cookies = Column(Text, default="")
     created_at = Column(DateTime, default=_now)
 
     target = relationship("Target", back_populates="campaigns")
@@ -108,6 +112,16 @@ class Step(Base):
     created_at = Column(DateTime, default=_now)
 
     attempt = relationship("Attempt", back_populates="steps")
+
+
+class Setting(Base):
+    """Key/value store for runtime configuration the operator can change from
+    the console (e.g. the attacker/judge LLM). Overrides the env defaults in
+    config.py when present. Single-tenant, self-hosted tool — one row per key."""
+    __tablename__ = "settings"
+    key = Column(String(80), primary_key=True)
+    value = Column(JSON, default=dict)
+    updated_at = Column(DateTime, default=_now, onupdate=_now)
 
 
 class Finding(Base):

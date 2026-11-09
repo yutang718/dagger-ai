@@ -23,8 +23,8 @@ from .targets import TargetClient
 _RUNNING: set[int] = set()
 
 
-def start_run(run_id: int) -> None:
-    t = threading.Thread(target=_execute, args=(run_id,), daemon=True)
+def start_run(run_id: int, lang: str = "en") -> None:
+    t = threading.Thread(target=_execute, args=(run_id, lang), daemon=True)
     t.start()
 
 
@@ -32,7 +32,7 @@ def stop_run(run_id: int) -> None:
     _RUNNING.discard(run_id)
 
 
-def _execute(run_id: int) -> None:
+def _execute(run_id: int, lang: str = "en") -> None:
     _RUNNING.add(run_id)
     db = SessionLocal()
     try:
@@ -44,26 +44,37 @@ def _execute(run_id: int) -> None:
         run.status = "running"
         db.commit()
 
+        # Per-engagement token meter (visible to every LLM call in this thread).
+        from .llm_client import new_meter
+        meter = new_meter()
         attacker = AttackerAgent()
         tclient = TargetClient(target)
+        from . import tools_client
+        _ck = tools_client.cookie_header(getattr(campaign, "session_cookies", "") or "")
+        _hdrs = {"User-Agent": "Dagger-AI/1.0"}
+        if _ck:
+            _hdrs["Cookie"] = _ck
         http = httpx.Client(timeout=config.REQUEST_TIMEOUT, follow_redirects=True,
-                            headers={"User-Agent": "Dagger-AI/1.0"})
+                            headers=_hdrs)
         ctx = {"attempts": 0, "success": 0,
                "sev": {s: 0 for s in taxonomy.SEVERITY_ORDER}}
 
         if target.kind == "host":
             # AI pentest engagement: the operator drives real tools + web probes.
+            # Persist each attempt as it is produced so the Live Monitor streams.
             from . import operator
-            attempts = operator.run_engagement(
+            def _emit_host(a):
+                _persist(db, run_id, a, None, ctx)
+                db.commit()
+            operator.run_engagement(
                 target.endpoint or "", campaign.probes or list(operator.MODULES),
                 bool(target.allow_internal),
                 min(campaign.max_turns or config.MAX_TOOL_STEPS, config.MAX_TOOL_STEPS),
-                attacker.client)
-            for a in attempts:
-                if run_id not in _RUNNING:
-                    run.status = "stopped"; break
-                _persist(db, run_id, a, None, ctx)
-                db.commit()
+                attacker.client, on_attempt=_emit_host,
+                cancelled=lambda: run_id not in _RUNNING, lang=lang,
+                cookies=campaign.session_cookies or "")
+            if run_id not in _RUNNING:
+                run.status = "stopped"
         else:
             for probe_id in (campaign.probes or []):
                 if run_id not in _RUNNING:
@@ -92,6 +103,7 @@ def _execute(run_id: int) -> None:
             "successes": ctx["success"],
             "severity": ctx["sev"],
             "worst": taxonomy.worst([s for s, n in ctx["sev"].items() if n]),
+            "usage": meter.as_dict(),
         }
         if run.status != "stopped":
             run.status = "done"
@@ -139,9 +151,23 @@ def _persist(db, run_id, a, probe, ctx):
     for i, s in enumerate(a.steps):
         db.add(Step(attempt_id=row.id, idx=i, role=s.role, prompt=s.prompt,
                     response=s.response, note=s.note, latency_ms=s.latency_ms))
-    # Findings
+
+    # Findings — de-duplicated within the run so the same issue found by several
+    # tools/steps is recorded once (signature = title + owasp + evidence).
+    seen = ctx.setdefault("seen", set())
+
+    def _dupe(title, owasp, evidence):
+        sig = (str(title).strip().lower(), str(owasp).strip().lower(),
+               str(evidence or "").strip().lower()[:200])
+        if sig in seen:
+            return True
+        seen.add(sig)
+        return False
+
     if a.findings:
         for f in a.findings:
+            if _dupe(f.get("title", ""), f.get("owasp", ""), f.get("evidence", "")):
+                continue
             fs = f.get("severity", "info")
             db.add(Finding(
                 run_id=run_id, attempt_id=row.id,
@@ -152,9 +178,11 @@ def _persist(db, run_id, a, probe, ctx):
             ctx["success"] += 1
             ctx["sev"][fs] = ctx["sev"].get(fs, 0) + 1
     elif a.success and probe is not None:
-        db.add(_finding(run_id, row.id, probe, a))
-        ctx["success"] += 1
-        ctx["sev"][probe.severity] = ctx["sev"].get(probe.severity, 0) + 1
+        title = f"{probe.name} — {taxonomy.owasp_label(probe.owasp)}"
+        if not _dupe(title, probe.owasp, a.evidence):
+            db.add(_finding(run_id, row.id, probe, a))
+            ctx["success"] += 1
+            ctx["sev"][probe.severity] = ctx["sev"].get(probe.severity, 0) + 1
 
 
 def _finding(run_id, attempt_id, probe, a) -> Finding:
