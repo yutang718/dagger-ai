@@ -68,6 +68,8 @@ PROBE_ZH = {
 MODULE_ZH = {
     "recon_nmap": "Nmap 端口与服务侦察",
     "recon_subfinder": "Subfinder 子域名枚举",
+    "recon_theharvester": "theHarvester 被动 OSINT（邮箱 / 子域）",
+    "recon_dnsx": "dnsx DNS 解析与记录（A/MX/NS/TXT）",
     "probe_httpx": "httpx Web 探测 / 技术识别",
     "fingerprint_whatweb": "WhatWeb 指纹识别",
     "waf_wafw00f": "WAFW00F WAF 检测",

@@ -25,6 +25,8 @@ from .records import AttemptRec, StepRec
 MODULES = {
     "recon_nmap":          ("recon",       "nmap"),
     "recon_subfinder":     ("recon",       "subfinder"),
+    "recon_theharvester":  ("recon",       "theharvester"),
+    "recon_dnsx":          ("recon",       "dnsx"),
     "probe_httpx":         ("fingerprint", "httpx"),
     "fingerprint_whatweb": ("fingerprint", "whatweb"),
     "waf_wafw00f":         ("fingerprint", "wafw00f"),
@@ -49,6 +51,8 @@ PHASE_ORDER = ["recon", "fingerprint", "discovery", "vuln", "exploit"]
 MODULE_META = {
     "recon_nmap": ("Nmap port & service recon", "nmap"),
     "recon_subfinder": ("Subfinder subdomain enumeration", "subfinder"),
+    "recon_theharvester": ("theHarvester passive OSINT (emails / subdomains)", "theHarvester"),
+    "recon_dnsx": ("dnsx DNS resolution & records (A/MX/NS/TXT)", "dnsx"),
     "probe_httpx": ("httpx web probe / tech detect", "httpx"),
     "fingerprint_whatweb": ("WhatWeb fingerprinting", "whatweb"),
     "waf_wafw00f": ("WAFW00F WAF detection", "wafw00f"),

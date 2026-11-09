@@ -323,6 +323,51 @@ def subfinder(target, options=None, timeout=180):
     return _result("subfinder", cmd, rc, out, ms, [], subs[:200], error=err)
 
 
+# ------------------------------------------------------- theHarvester (recon/OSINT)
+def theharvester(target, options=None, timeout=240):
+    """Passive OSINT: aggregate emails and subdomains for a domain from public,
+    key-free sources. Benign (no target contact beyond public services)."""
+    binary = BINARIES.get("theharvester", "theHarvester")
+    if not _which(binary):
+        return _result("theharvester", binary, available=False)
+    host = _host_only(target).split(":")[0]
+    cmd = [binary, "-d", host, "-l", "500",
+           "-b", "crtsh,hackertarget,rapiddns,otx,duckduckgo,bing,urlscan"]
+    rc, out, ms, err = _run(cmd, timeout)
+    emails = sorted(set(re.findall(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", out or "")))
+    host_re = re.compile(r"\b([a-z0-9][a-z0-9.-]*\." + re.escape(host) + r")\b", re.I)
+    hosts = sorted({m.lower() for m in host_re.findall(out or "")})
+    obs = [f"email: {e}" for e in emails[:50]] + [f"host: {h}" for h in hosts[:150]]
+    findings = []
+    if emails:
+        findings.append({"title": f"{len(emails)} email address(es) exposed via OSINT",
+                         "severity": "info", "owasp": "", "mitre": "T1589.002",
+                         "evidence": ", ".join(emails[:12]),
+                         "description": "Public OSINT sources disclose corporate/role email addresses, usable for phishing and credential attacks.",
+                         "remediation": "Limit public exposure of corporate addresses; train staff against phishing."})
+    return _result("theharvester", cmd, rc, out, ms, findings, obs, error=err)
+
+
+# ------------------------------------------------------------- dnsx (recon/DNS)
+def dnsx(target, options=None, timeout=180):
+    """Resolve the target (or subfinder's discovered subdomains, via options
+    `targets`) and pull A/AAAA/CNAME/NS/MX/TXT records for infrastructure recon."""
+    if not _which("dnsx"):
+        return _result("dnsx", "dnsx", available=False)
+    listfile = _targets_file(options)
+    if not listfile:
+        host = _host_only(target).split(":")[0]
+        f = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False)
+        f.write(host)
+        f.close()
+        listfile = f.name
+    cmd = ["dnsx", "-l", listfile, "-silent", "-nc", "-resp",
+           "-a", "-aaaa", "-cname", "-ns", "-mx", "-txt"]
+    rc, out, ms, err = _run(cmd, timeout)
+    lines = [l.strip() for l in (out or "").splitlines() if l.strip()]
+    return _result("dnsx", cmd, rc, out, ms, [], lines[:200], error=err)
+
+
 # ------------------------------------------------------------ katana (discovery)
 def katana(target, options=None, timeout=180):
     if not _which("katana"):
@@ -681,14 +726,15 @@ def jsendpoints(target, options=None, timeout=180):
 
 
 # tools whose binary name differs from the registry key
-BINARIES = {"testssl": "testssl", "gitsecrets": "git-dumper"}
+BINARIES = {"testssl": "testssl", "gitsecrets": "git-dumper", "theharvester": "theHarvester"}
 # pure-python tools (no external binary) — always available
 PY_TOOLS = {"jsendpoints"}
 
 REGISTRY = {
     "nmap": nmap, "httpx": httpx, "nuclei": nuclei, "ffuf": ffuf,
     "whatweb": whatweb, "sqlmap": sqlmap,
-    "subfinder": subfinder, "katana": katana, "wafw00f": wafw00f, "sslscan": sslscan,
+    "subfinder": subfinder, "theharvester": theharvester, "dnsx": dnsx,
+    "katana": katana, "wafw00f": wafw00f, "sslscan": sslscan,
     "nikto": nikto, "dalfox": dalfox, "commix": commix,
     "gau": gau, "arjun": arjun, "testssl": testssl, "wpscan": wpscan, "gitsecrets": gitsecrets,
     "jsendpoints": jsendpoints,

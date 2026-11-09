@@ -12,7 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # compiling pydantic-core from Rust source — Kali's Python has no prebuilt
 # wheel for it, and the from-source build fails to link in this image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        nmap sqlmap whatweb ffuf seclists dnsutils \
+        nmap sqlmap whatweb ffuf seclists dnsutils theharvester \
         nikto sslscan wafw00f commix arjun testssl.sh wpscan \
         golang-go git ca-certificates curl python3-pip \
         python3 python3-fastapi python3-uvicorn python3-pydantic \
@@ -25,6 +25,7 @@ RUN for pkg in \
         github.com/projectdiscovery/httpx/cmd/httpx@latest \
         github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
         github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest \
+        github.com/projectdiscovery/dnsx/cmd/dnsx@latest \
         github.com/projectdiscovery/katana/cmd/katana@latest \
         github.com/hahwul/dalfox/v2@latest \
         github.com/lc/gau/v2/cmd/gau@latest \
