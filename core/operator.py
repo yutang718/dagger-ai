@@ -24,6 +24,7 @@ from .records import AttemptRec, StepRec
 # module id -> (phase, runner tool). "web_probes" runs in-process.
 MODULES = {
     "recon_nmap":          ("recon",       "nmap"),
+    "recon_naabu":         ("recon",       "naabu"),
     "recon_subfinder":     ("recon",       "subfinder"),
     "recon_theharvester":  ("recon",       "theharvester"),
     "recon_dnsx":          ("recon",       "dnsx"),
@@ -31,6 +32,7 @@ MODULES = {
     "fingerprint_whatweb": ("fingerprint", "whatweb"),
     "waf_wafw00f":         ("fingerprint", "wafw00f"),
     "tls_sslscan":         ("fingerprint", "sslscan"),
+    "tls_tlsx":            ("fingerprint", "tlsx"),
     "discovery_ffuf":      ("discovery",   "ffuf"),
     "crawl_katana":        ("discovery",   "katana"),
     "endpoints_js":        ("discovery",   "jsendpoints"),
@@ -41,6 +43,7 @@ MODULES = {
     "dast_zap":            ("vuln",        "zap"),
     "tls_testssl":         ("vuln",        "testssl"),
     "cms_wpscan":          ("vuln",        "wpscan"),
+    "exploits_searchsploit": ("vuln",      "searchsploit"),
     "sqli_sqlmap":         ("exploit",     "sqlmap"),
     "xss_dalfox":          ("exploit",     "dalfox"),
     "cmdi_commix":         ("exploit",     "commix"),
@@ -51,6 +54,7 @@ PHASE_ORDER = ["recon", "fingerprint", "discovery", "vuln", "exploit"]
 
 MODULE_META = {
     "recon_nmap": ("Nmap port & service recon", "nmap"),
+    "recon_naabu": ("naabu fast port discovery", "naabu"),
     "recon_subfinder": ("Subfinder subdomain enumeration", "subfinder"),
     "recon_theharvester": ("theHarvester passive OSINT (emails / subdomains)", "theHarvester"),
     "recon_dnsx": ("dnsx DNS resolution & records (A/MX/NS/TXT)", "dnsx"),
@@ -58,6 +62,7 @@ MODULE_META = {
     "fingerprint_whatweb": ("WhatWeb fingerprinting", "whatweb"),
     "waf_wafw00f": ("WAFW00F WAF detection", "wafw00f"),
     "tls_sslscan": ("sslscan TLS/SSL analysis", "sslscan"),
+    "tls_tlsx": ("tlsx TLS fingerprint & cert hygiene", "tlsx"),
     "discovery_ffuf": ("ffuf content discovery", "ffuf"),
     "crawl_katana": ("Katana crawl / URL discovery", "katana"),
     "endpoints_js": ("JS endpoint & page discovery", "jsendpoints"),
@@ -68,6 +73,7 @@ MODULE_META = {
     "dast_zap": ("OWASP ZAP automated DAST scan", "zaproxy"),
     "tls_testssl": ("testssl.sh TLS vulnerability scan", "testssl.sh"),
     "cms_wpscan": ("wpscan WordPress scan", "wpscan"),
+    "exploits_searchsploit": ("searchsploit known-exploit intel (Exploit-DB)", "searchsploit"),
     "sqli_sqlmap": ("sqlmap SQLi validation", "sqlmap"),
     "xss_dalfox": ("dalfox XSS validation", "dalfox"),
     "cmdi_commix": ("commix command-injection validation", "commix"),
@@ -78,7 +84,53 @@ MODULE_META = {
 
 # Tools that work against a bare IP or a whole network/CIDR (host vuln scanning),
 # vs. the web-path tools that need a single HTTP URL.
-NETWORK_TOOLS = {"nmap", "httpx", "nuclei"}
+NETWORK_TOOLS = {"nmap", "naabu", "httpx", "nuclei"}
+
+# Service/product + version banner, e.g. "Apache httpd 2.2.8", used to seed
+# searchsploit from what recon/fingerprint observed.
+_PRODVER = re.compile(r"([A-Za-z][A-Za-z0-9.\+\-]{1,28}?)[ /]v?(\d+\.\d+(?:\.\d+)?)")
+
+
+def _service_terms(attempts) -> list[str]:
+    """Collect product/version banners seen so far (nmap/naabu/httpx output and
+    finding evidence) to drive searchsploit. Conservative and de-duplicated."""
+    cand, seen = [], set()
+
+    def add(s: str):
+        s = re.sub(r"\s+", " ", (s or "")).strip(" .,:;—-")
+        if len(s) < 3 or not re.search(r"\d", s):
+            return
+        key = s.lower()
+        if key not in seen:
+            seen.add(key)
+            cand.append(s)
+
+    for a in attempts or []:
+        texts = []
+        for f in (getattr(a, "findings", None) or []):
+            texts.append(f.get("evidence", ""))
+        for st in (getattr(a, "steps", None) or []):
+            texts.extend((st.response or "").splitlines())
+        for line in texts:
+            m = re.search(r"open\s*[—:\-]+\s*(.+)$", line)   # nmap "80/tcp open — http Apache 2.2.8"
+            if m:
+                add(m.group(1))
+                continue
+            pm = _PRODVER.search(line)
+            if pm and not line.lstrip().lower().startswith(("cve", "http/", "[", "{")):
+                add(f"{pm.group(1)} {pm.group(2)}")
+    return cand[:12]
+
+
+def _tool_invocation(tool: str, url: str, host: str, attempts=None):
+    """(target, options) for a tool: host-oriented tools get the bare host,
+    searchsploit gets service/version terms gathered from prior attempts, and
+    web-path tools get the URL."""
+    if tool in ("nmap", "naabu", "tlsx"):
+        return host, None
+    if tool == "searchsploit":
+        return host, {"terms": _service_terms(attempts)}
+    return url, None
 
 
 def _is_cidr(s: str) -> bool:
@@ -164,8 +216,8 @@ def _playbook_engagement(client, url, host, selected, allow_internal, max_steps,
             for a in _web_probe_attempts(url, lang, cookies):
                 _emit(attempts, a, on_attempt)
             continue
-        tgt = host if tool == "nmap" else url
-        res = tools_client.run(tool, tgt, allow_internal=allow_internal, cookies=cookies)
+        tgt, opts = _tool_invocation(tool, url, host, attempts)
+        res = tools_client.run(tool, tgt, options=opts, allow_internal=allow_internal, cookies=cookies)
         _emit(attempts, _attempt_from_tool(mod, phase, res, lang), on_attempt)
         if tool == "jsendpoints":   # scan the discovered backend surface
             for sa in _scan_discovered(res, allow_internal, lang, cookies):
@@ -504,17 +556,19 @@ def _scan_discovered(res, allow_internal, lang="en", cookies=""):
     return out
 
 
-def _run_module(mod, url, host, allow_internal, reason, client=None, lang="en", cookies=""):
+def _run_module(mod, url, host, allow_internal, reason, client=None, lang="en", cookies="",
+                attempts=None):
     """Run one module, attaching the LLM's reasoning for choosing it (as a step
-    note) and a plain-language conclusion of the output (as the rationale)."""
+    note) and a plain-language conclusion of the output (as the rationale).
+    `attempts` (prior results) seeds tools like searchsploit that need context."""
     phase, tool = MODULES[mod]
     out = []
     if tool == "__builtin__":
         out = _web_probe_attempts(url, lang, cookies)
         hits = sum(1 for a in out if a.success)
     else:
-        tgt = host if tool == "nmap" else url
-        res = tools_client.run(tool, tgt, allow_internal=allow_internal, cookies=cookies)
+        tgt, opts = _tool_invocation(tool, url, host, attempts)
+        res = tools_client.run(tool, tgt, options=opts, allow_internal=allow_internal, cookies=cookies)
         a = _attempt_from_tool(mod, phase, res, lang)
         if a.steps and reason:
             a.steps[0].note = f"AI chose this — {reason} · " + a.steps[0].note
@@ -561,7 +615,8 @@ def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
             reason = reason or "next phase in order"
         remaining.discard(mod)
         budget -= 1
-        recs, hits = _run_module(mod, url, host, allow_internal, reason, client, lang, cookies)
+        recs, hits = _run_module(mod, url, host, allow_internal, reason, client, lang, cookies,
+                                 attempts=attempts)
         for a in recs:
             _emit(attempts, a, on_attempt)
         ran.append((mod, hits))

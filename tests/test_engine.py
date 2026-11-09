@@ -157,7 +157,7 @@ def test_exploit_verification_routes_discovered_cves(monkeypatch):
     # A nuclei (tool) run flags two CVEs: one we have a benign verifier for,
     # one we don't. The auto-verify stage must actively re-check the first and
     # flag the second for manual work — never trust a signature alone.
-    def fake_run(tool, target, allow_internal=False, cookies=""):
+    def fake_run(tool, target, options=None, allow_internal=False, cookies=""):
         if tool == "nuclei":
             return {"tool": "nuclei", "available": True, "command": "nuclei", "stdout": "",
                     "observations": [], "duration_ms": 5, "error": "",

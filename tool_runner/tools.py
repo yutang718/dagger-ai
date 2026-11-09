@@ -773,6 +773,134 @@ def jsendpoints(target, options=None, timeout=180):
     return res
 
 
+# ------------------------------------------------------------- naabu (recon)
+def naabu(target, options=None, timeout=240):
+    """Fast TCP port discovery (ProjectDiscovery). Scans the top 1000 ports far
+    quicker than a full nmap sweep; the open ports it finds are attack surface to
+    pass on to nmap -sV for service/version detection."""
+    if not _which("naabu"):
+        return _result("naabu", "naabu", available=False)
+    host = _host_only(target).split(":")[0]   # naabu wants a host/IP, not a URL
+    cmd = ["naabu", "-host", host, "-silent", "-json", "-top-ports", "1000", "-rate", "1000"]
+    rc, out, ms, err = _run(cmd, timeout)
+    ports = []
+    for line in (out or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if d.get("port"):
+            ports.append(int(d["port"]))
+    ports = sorted(set(ports))
+    obs = [f"{p}/tcp open" for p in ports]
+    findings = []
+    if ports:
+        findings.append({"title": f"{len(ports)} open TCP port(s) discovered",
+                         "severity": "info", "owasp": "A05", "mitre": "T1046",
+                         "evidence": ", ".join(str(p) for p in ports[:50]),
+                         "description": "naabu found these TCP ports open. Each open port is attack "
+                                        "surface; pair with service/version detection (nmap -sV) to assess exposure.",
+                         "remediation": "Close or firewall ports that need not be reachable; apply least exposure."})
+    return _result("naabu", cmd, rc, out, ms, findings, obs, error=err)
+
+
+# --------------------------------------------------------------- tlsx (TLS)
+def tlsx(target, options=None, timeout=120):
+    """TLS fingerprinting & certificate-hygiene checks (ProjectDiscovery):
+    negotiated protocol/cipher plus expired / self-signed / hostname-mismatch /
+    untrusted certificates. Complements sslscan/testssl.sh."""
+    if not _which("tlsx"):
+        return _result("tlsx", "tlsx", available=False)
+    host = _host_only(target)
+    if ":" not in host:
+        host += ":443"
+    cmd = ["tlsx", "-u", host, "-json", "-silent", "-tls-version", "-cipher",
+           "-expired", "-self-signed", "-mismatched", "-untrusted"]
+    rc, out, ms, err = _run(cmd, timeout)
+    findings, obs = [], []
+    for line in (out or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        h = d.get("host", host)
+        ver = str(d.get("tls_version") or d.get("version") or "")
+        cipher = d.get("cipher") or ""
+        if ver or cipher:
+            obs.append(f"{h} {ver} {cipher}".strip())
+        if ver.lower() in ("ssl30", "sslv3", "tls10", "tls11"):
+            findings.append({"title": f"Weak TLS protocol negotiated: {ver}", "severity": "medium",
+                             "owasp": "A02", "mitre": "T1040", "evidence": f"{h}: {ver}",
+                             "description": "The endpoint negotiates a deprecated SSL/TLS protocol version.",
+                             "remediation": "Disable SSLv3 / TLS 1.0 / TLS 1.1; require TLS 1.2 or higher."})
+        for flag, label, sev in (("expired", "certificate expired", "high"),
+                                 ("self_signed", "self-signed certificate", "medium"),
+                                 ("mismatched", "hostname mismatch", "high"),
+                                 ("untrusted", "untrusted certificate chain", "medium")):
+            if d.get(flag):
+                findings.append({"title": f"TLS certificate issue: {label}", "severity": sev,
+                                 "owasp": "A02", "mitre": "T1040", "evidence": f"{h}: {label}",
+                                 "description": f"tlsx flagged the certificate as {label}.",
+                                 "remediation": "Install a valid CA-issued certificate that matches the "
+                                                "hostname and keep it renewed."})
+    return _result("tlsx", cmd, rc, out, ms, findings[:20], obs[:40], error=err)
+
+
+# ------------------------------------------------- searchsploit (vuln intel)
+def searchsploit(target, options=None, timeout=150):
+    """Map detected products/versions to known public exploits via the offline
+    Exploit-DB (searchsploit). Driven by `options['terms']` — service/version
+    banners the operator gathered during recon/fingerprint. Offline, no network."""
+    if not _which("searchsploit"):
+        return _result("searchsploit", "searchsploit", available=False)
+    terms = [t for t in ((options or {}).get("terms") or []) if t]
+    q = (options or {}).get("query")
+    if q:
+        terms = [q] + terms
+    terms = terms[:12]
+    if not terms:
+        return _result("searchsploit", "searchsploit", 0,
+                       "(no service/version terms derived from recon — nothing to search)", 0,
+                       [], ["no search terms available"])
+    findings, obs, seen, cmds = [], [], set(), []
+    per = max(15, timeout // max(1, len(terms)))
+    for term in terms:
+        cmd = ["searchsploit", "--json", "--disable-colour", term]
+        cmds.append(" ".join(cmd))
+        rc, out, ms, err = _run(cmd, per)
+        try:
+            data = json.loads(out or "{}")
+        except ValueError:
+            continue
+        for e in (data.get("RESULTS_EXPLOIT") or []):
+            edb = str(e.get("EDB-ID") or "")
+            title = (e.get("Title") or "").strip()
+            if not title:
+                continue
+            key = edb or title
+            if key in seen:
+                continue
+            seen.add(key)
+            obs.append(f"{term} → EDB-{edb}: {title}")
+            findings.append({"title": f"Known public exploit may affect “{term}”",
+                             "severity": "medium", "owasp": "A06", "mitre": "T1595.002",
+                             "evidence": f"Exploit-DB {edb}: {title}",
+                             "description": "searchsploit matched a public exploit against a detected "
+                                            "product/version string. This is a candidate (version-string "
+                                            "match), not a confirmed exploitable vulnerability.",
+                             "remediation": "Confirm the exact version and applicability; update the "
+                                            "affected component to a patched release; validate with a "
+                                            "benign PoC before relying on it."})
+    return _result("searchsploit", "; ".join(cmds)[:300] or "searchsploit", 0,
+                   "\n".join(obs)[:MAX_OUT], 0, findings[:40], obs[:120])
+
+
 # tools whose binary name differs from the registry key
 BINARIES = {"testssl": "testssl", "gitsecrets": "git-dumper", "theharvester": "theHarvester",
             "zap": "zaproxy"}
@@ -787,6 +915,7 @@ REGISTRY = {
     "nikto": nikto, "zap": zap, "dalfox": dalfox, "commix": commix,
     "gau": gau, "arjun": arjun, "testssl": testssl, "wpscan": wpscan, "gitsecrets": gitsecrets,
     "jsendpoints": jsendpoints,
+    "naabu": naabu, "tlsx": tlsx, "searchsploit": searchsploit,
 }
 
 

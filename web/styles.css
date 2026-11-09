@@ -398,6 +398,27 @@ tr:hover td{background:var(--panel2)}
 /* Playbook toolbar button group */
 .pb-toolbar-btns{display:flex;gap:8px;flex-wrap:wrap}
 
+/* Playbook → tool-coverage matrix */
+.pb-cov{margin-top:28px}
+.pb-cov h2{font-size:18px;margin:0 0 4px}
+.pb-cov .lead2{color:var(--muted);font-size:13px;margin:0 0 12px;max-width:80ch}
+.pb-cov-legend{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:0 0 14px}
+.pb-cov-g{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:12px 15px;margin:10px 0}
+.pb-cov-g h3{font-size:13px;margin:0 0 7px;color:var(--ink)}
+.pb-cov-row{display:flex;gap:11px;align-items:flex-start;padding:7px 0;border-top:1px solid var(--line)}
+.pb-cov-g h3+.pb-cov-row{border-top:0}
+.pb-cov-name{font-family:var(--mono);font-size:12px;color:var(--ink);flex:0 0 180px;word-break:break-word}
+.pb-cov-note{color:var(--muted);font-size:12.5px;flex:1;min-width:0;line-height:1.5}
+.pb-st{flex:0 0 auto;font-size:10px;font-weight:700;letter-spacing:.02em;padding:2px 9px;border-radius:999px;
+  border:1px solid var(--line);white-space:nowrap;min-width:72px;text-align:center}
+.pb-st.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,var(--line))}
+.pb-st.cand{color:var(--med);border-color:color-mix(in srgb,var(--med) 45%,var(--line))}
+.pb-st.no{color:var(--muted)}
+@media (max-width:560px){
+  .pb-cov-row{flex-wrap:wrap}
+  .pb-cov-name{flex-basis:auto}
+}
+
 /* ---------- Playbook → PDF (print) ---------- */
 @media print{
   /* force a clean, ink-light rendering regardless of the active theme */
@@ -411,7 +432,7 @@ tr:hover td{background:var(--panel2)}
   h1{ font-size:20px }
   .lead{ margin-bottom:12px }
   .pb-card, .pb-task, .pb-align{ box-shadow:none !important; }
-  .pb-phase, .pb-task, .pb-card{ break-inside:avoid; page-break-inside:avoid; }
+  .pb-phase, .pb-task, .pb-card, .pb-cov-g{ break-inside:avoid; page-break-inside:avoid; }
   .pb-cmd, .pb-tool, .pb-chip{ white-space:normal; }
   a{ color:inherit; text-decoration:none; }
   *{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
