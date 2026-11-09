@@ -394,3 +394,26 @@ tr:hover td{background:var(--panel2)}
   .pb-node{width:34px;height:34px;font-size:13px}
   .pb-tasks{grid-template-columns:1fr}
 }
+
+/* Playbook toolbar button group */
+.pb-toolbar-btns{display:flex;gap:8px;flex-wrap:wrap}
+
+/* ---------- Playbook → PDF (print) ---------- */
+@media print{
+  /* force a clean, ink-light rendering regardless of the active theme */
+  :root, :root[data-theme="aurora"], :root[data-theme="daylight"]{
+    --bg:#ffffff; --panel:#ffffff; --panel2:#f5f6f9; --line:#d3d9e2; --ink:#14181f;
+    --muted:#55606f; --code-bg:#f5f6f9; --accent:#b23520; --accent2:#5a4bd0;
+  }
+  .topbar, #drawer, #toast, #login, .pb-toolbar-btns, .pb-chev{ display:none !important; }
+  html, body, #app, #main{ background:#fff !important; }
+  #main{ padding:0 14px !important; max-width:none !important; }
+  h1{ font-size:20px }
+  .lead{ margin-bottom:12px }
+  .pb-card, .pb-task, .pb-align{ box-shadow:none !important; }
+  .pb-phase, .pb-task, .pb-card{ break-inside:avoid; page-break-inside:avoid; }
+  .pb-cmd, .pb-tool, .pb-chip{ white-space:normal; }
+  a{ color:inherit; text-decoration:none; }
+  *{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  @page{ margin:14mm; }
+}
