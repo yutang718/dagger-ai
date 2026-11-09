@@ -67,6 +67,7 @@ PROBE_ZH = {
 # Pentest module Chinese names (keyed by module id from operator.MODULES).
 MODULE_ZH = {
     "recon_nmap": "Nmap 端口与服务侦察",
+    "recon_naabu": "naabu 快速端口发现",
     "recon_subfinder": "Subfinder 子域名枚举",
     "recon_theharvester": "theHarvester 被动 OSINT（邮箱 / 子域）",
     "recon_dnsx": "dnsx DNS 解析与记录（A/MX/NS/TXT）",
@@ -74,6 +75,7 @@ MODULE_ZH = {
     "fingerprint_whatweb": "WhatWeb 指纹识别",
     "waf_wafw00f": "WAFW00F WAF 检测",
     "tls_sslscan": "sslscan TLS/SSL 分析",
+    "tls_tlsx": "tlsx TLS 指纹与证书核查",
     "discovery_ffuf": "ffuf 内容发现",
     "crawl_katana": "Katana 爬取 / URL 发现",
     "endpoints_js": "JS 接口 / 页面发现",
@@ -84,6 +86,7 @@ MODULE_ZH = {
     "dast_zap": "OWASP ZAP 自动化 DAST 扫描",
     "tls_testssl": "testssl.sh TLS 漏洞扫描",
     "cms_wpscan": "wpscan WordPress 扫描",
+    "exploits_searchsploit": "searchsploit 已知漏洞情报（Exploit-DB）",
     "sqli_sqlmap": "sqlmap SQL 注入验证",
     "xss_dalfox": "dalfox XSS 验证",
     "cmdi_commix": "commix 命令注入验证",

@@ -14,12 +14,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         nmap sqlmap whatweb ffuf seclists dnsutils theharvester \
         nikto sslscan wafw00f commix arjun testssl.sh wpscan zaproxy \
+        exploitdb libpcap-dev \
         golang-go git ca-certificates curl python3-pip \
         python3 python3-fastapi python3-uvicorn python3-pydantic \
     && rm -rf /var/lib/apt/lists/*
 
-# ProjectDiscovery httpx/nuclei/subfinder/katana, dalfox, gau, and the secret
-# scanners gitleaks/trufflehog, via go install. Each is installed independently
+# ProjectDiscovery httpx/nuclei/subfinder/dnsx/katana/naabu/tlsx, dalfox, gau,
+# and the secret scanners gitleaks/trufflehog, via go install. Independently
 # with retries so a transient network blip on one does not skip the rest.
 RUN for pkg in \
         github.com/projectdiscovery/httpx/cmd/httpx@latest \
@@ -27,6 +28,8 @@ RUN for pkg in \
         github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest \
         github.com/projectdiscovery/dnsx/cmd/dnsx@latest \
         github.com/projectdiscovery/katana/cmd/katana@latest \
+        github.com/projectdiscovery/naabu/v2/cmd/naabu@latest \
+        github.com/projectdiscovery/tlsx/cmd/tlsx@latest \
         github.com/hahwul/dalfox/v2@latest \
         github.com/lc/gau/v2/cmd/gau@latest \
         github.com/gitleaks/gitleaks/v8@latest \
