@@ -46,6 +46,17 @@ function mdToHtml(src) {
   flushPara(); closeList();
   return html;
 }
+/* Strip markdown markers to clean plain text — for contexts that show text
+   verbatim (the live-feed snippet), so stray **bold** / # never leak as noise. */
+function stripMd(s) {
+  return String(s || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1").replace(/__([^_]+)__/g, "$1")
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1$2")
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+    .replace(/[*#`]+/g, "");
+}
 
 /* ---------- localized lookups over meta ---------- */
 const probeName = p => (zh() && p.name_zh) ? p.name_zh : p.name;
@@ -1237,7 +1248,7 @@ function feedHtml(attempts){
   return attempts.slice().reverse().slice(0,60).map(a=>{
     const ms=(a.steps||[]).reduce((n,s)=>n+(s.latency_ms||0),0);
     const raw=a.rationale||((a.steps||[])[0]||{}).response||((a.steps||[])[0]||{}).prompt||"";
-    const txt=esc(raw.replace(/\s+/g," ").trim().slice(0,130));
+    const txt=esc(stripMd(raw).replace(/\s+/g," ").trim().slice(0,130));
     return `<div class="fev ${a.success?"ok":""}">
       <div class="fh"><span class="fh-l">${kindBadge(a)} ${phaseChip(a)} <span class="mono">${esc(techLabel(a.technique))}</span></span>
         <span class="fh-r">${ms?ms+" ms":""}${a.success?` · <b style="color:var(--crit)">${t("monitor.exploited")}</b>`:""}</span></div>
@@ -1323,7 +1334,9 @@ function openAttempt(a){
       <div class="io"><div class="lab">▸ ${esc(s.note||t("attempt.attackPrompt"))}</div>
         <pre>${esc(s.prompt)}</pre>
         <div class="lab">${t("attempt.targetResponse")}</div>
-        <pre class="resp">${esc(s.response)}</pre></div></div>`).join("");
+        ${/^(plan|report)$/.test(s.role)
+          ? `<div class="md resp">${mdToHtml(s.response||"")}</div>`
+          : `<pre class="resp">${esc(s.response)}</pre>`}</div></div>`).join("");
   openDrawer(`<span class="close-x" onclick="closeDrawer()">×</span>
     <h2>${a.success?"✔ ":""}${esc(techLabel(a.probe||a.technique))}</h2>
     <div class="row" style="gap:8px;margin-bottom:10px">
