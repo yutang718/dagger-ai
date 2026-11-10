@@ -81,6 +81,27 @@ def _cookie_args(tool, options):
     return args
 
 
+# Known-benign stderr noise some tools emit on every run — not errors, just
+# runtime chatter that otherwise pollutes the raw output and the live feed.
+_STDERR_NOISE = re.compile(
+    r"sonic/ast only supports|will fallback to encoding/json"      # bytedance/sonic JIT notice
+    r"|^\s*\[INF\]"                                                # ProjectDiscovery INFO status
+    r"|loading templates|Templates (loaded|clustered)|Executing \d+ signatures"
+    r"|Current nuclei|Public nuclei templates|projectdiscovery\.io"
+    r"|using (nuclei|httpx|subfinder) engine"
+    r"|\.gau\.toml not found|using default config"                 # gau: no config file
+    r"|java\.util\.prefs|Created user preferences|sun\.misc\.Unsafe"  # ZAP/JVM boilerplate
+    r"|terminally deprecated method|has been called|WARNING: Please consider reporting"
+    r"|resolves to \d+ IPs", re.I)                                 # nmap multi-IP info
+
+
+def _clean_stderr(s: str) -> str:
+    """Drop known-benign noise lines from a tool's stderr so only real messages
+    survive into the output shown to the operator."""
+    kept = [ln for ln in (s or "").splitlines() if ln.strip() and not _STDERR_NOISE.search(ln)]
+    return "\n".join(kept)
+
+
 def _run(cmd, timeout):
     start = time.time()
     try:
@@ -88,7 +109,8 @@ def _run(cmd, timeout):
         # e.g. commix otherwise reads its target list from stdin and does nothing.
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
                            stdin=subprocess.DEVNULL)
-        out = (p.stdout or "") + (("\n[stderr]\n" + p.stderr) if p.stderr else "")
+        err = _clean_stderr(p.stderr)
+        out = (p.stdout or "") + (("\n[stderr]\n" + err) if err else "")
         return p.returncode, out, int((time.time() - start) * 1000), None
     except subprocess.TimeoutExpired as e:
         # On timeout, TimeoutExpired.stdout stays BYTES even with text=True, so

@@ -1113,7 +1113,7 @@ function atkRow(a){
   const sub=(a.rationale||s0.prompt||"").slice(0,150);
   return `<div class="atk ${a.success?"ok":""}" data-att="${a.id}">
     <span class="ti"><div class="tn">${kindBadge(a)} ${esc(techLabel(a.technique))}
-      ${a.success?`<span class="badge sev-${a.severity}">${t("result.finding")}</span>`
+      ${a.success?`<span class="badge sev-${a.severity}">${resultLabel(a)}</span>`
                  :`<span class="no" style="font-size:11px">${t("result.clean")}</span>`}
       ${a.owasp?`<span class="tag">${a.owasp}</span>`:""}${a.atlas?`<span class="tag">${a.atlas}</span>`:""}</div>
       ${sub?`<div class="tc">${esc(sub)}</div>`:""}</span>
@@ -1152,7 +1152,7 @@ function attemptsTable(as){
       <td class="mono" style="font-size:12px">${esc(a.technique)}</td>
       <td>${a.owasp?`<span class="tag">${a.owasp}</span>`:'–'}</td>
       <td>${a.atlas?`<span class="tag">${a.atlas}</span>`:'–'}</td>
-      <td>${a.success?`<span class="badge sev-${a.severity}">${t("result.finding")}</span>`:`<span class="no">${t("result.clean")}</span>`}</td>
+      <td>${a.success?`<span class="badge sev-${a.severity}">${resultLabel(a)}</span>`:`<span class="no">${t("result.clean")}</span>`}</td>
       <td>${a.steps.length}</td></tr>`).join("")}
     </tbody></table>`;
 }
@@ -1251,7 +1251,9 @@ function feedHtml(attempts){
     const txt=esc(stripMd(raw).replace(/\s+/g," ").trim().slice(0,130));
     return `<div class="fev ${a.success?"ok":""}">
       <div class="fh"><span class="fh-l">${kindBadge(a)} ${phaseChip(a)} <span class="mono">${esc(techLabel(a.technique))}</span></span>
-        <span class="fh-r">${ms?ms+" ms":""}${a.success?` · <b style="color:var(--crit)">${t("monitor.exploited")}</b>`:""}</span></div>
+        <span class="fh-r">${ms?ms+" ms":""}${a.success?(isReal(a)
+          ? ` · <b style="color:var(--crit)">${t("monitor.exploited")}</b>`
+          : ` · <span class="fh-det">${t("monitor.detected")}</span>`):""}</span></div>
       ${txt?`<div class="fp">${txt}</div>`:""}
       ${a.success&&isExploit(a)&&impactOf(a)?`<div class="fimp">▶ ${esc(impactOf(a))}</div>`:""}</div>`;
   }).join("");
@@ -1338,7 +1340,7 @@ function openAttempt(a){
           ? `<div class="md resp">${mdToHtml(s.response||"")}</div>`
           : `<pre class="resp">${esc(s.response)}</pre>`}</div></div>`).join("");
   openDrawer(`<span class="close-x" onclick="closeDrawer()">×</span>
-    <h2>${a.success?"✔ ":""}${esc(techLabel(a.probe||a.technique))}</h2>
+    <h2>${a.success?(isReal(a)?"✔ ":"ℹ "):""}${esc(techLabel(a.probe||a.technique))}</h2>
     <div class="row" style="gap:8px;margin-bottom:10px">
       ${kindBadge(a)}
       <span class="badge sev-${a.severity}">${sevLabel(a.severity)}</span>
@@ -1448,8 +1450,14 @@ function resultOf(a){
   const req=(a.steps||[]).find(s=>s.role==="request")||((a.steps||[])[0]||{});
   return (req.response||"").slice(0,220);
 }
+/* A confirmed, exploitable finding — NOT an informational detection. An
+   info-severity success (e.g. "WAF/gateway detected") is intel, not a vuln, so
+   it never gets the "exploitable — confirmed" exploit card. */
+const isReal = a => a && a.success && a.severity && a.severity !== "info";
+const resultLabel = a => isReal(a) ? t("result.finding") : t("result.detected");
 function isExploit(a){
   if(["plan","report","validate"].includes(a.phase)) return false;
+  if(a.severity==="info") return false;           // info = detection/intel, not an exploit
   if((a.technique||"").startsWith("verify:")) return true;
   if(a.phase==="exploit") return true;
   return (a.steps||[]).some(s=>s.role==="request");

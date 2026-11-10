@@ -248,6 +248,7 @@ button.exp:hover{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) i
 .fev .fh{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--muted);margin-bottom:3px}
 .fev .fh-l{display:inline-flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}
 .fev .fh-r{white-space:nowrap;flex:none}
+.fh-det{color:var(--muted);font-weight:600;letter-spacing:.3px}
 .fev .fp{font-size:12px;line-height:1.45;color:var(--ink);opacity:.9;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .fev .fimp{margin-top:5px;font-size:11.5px;color:var(--crit);font-weight:600;
