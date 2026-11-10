@@ -569,18 +569,49 @@ def testssl(target, options=None, timeout=300):
         host += ":443"
     cmd = [bin_, "--color", "0", "--fast", "--quiet", "-U", host]
     rc, out, ms, err = _run(cmd, timeout)
-    findings, obs = [], []
-    VULNS = [("Heartbleed", "critical"), ("ROBOT", "high"), ("Ticketbleed", "high"), ("CCS", "high"),
-             ("CRIME", "medium"), ("POODLE", "high"), ("BEAST", "low"), ("LUCKY13", "medium"),
-             ("SWEET32", "medium"), ("FREAK", "high"), ("DROWN", "high"), ("LOGJAM", "medium")]
-    for vuln, sev in VULNS:
-        if re.search(rf"{vuln}.*(VULNERABLE|potentially vulnerable)", out or "", re.I):
-            obs.append(f"{vuln}: vulnerable")
-            findings.append({"title": f"TLS vulnerability: {vuln}", "severity": sev, "owasp": "A02",
-                             "mitre": "T1040", "evidence": vuln,
-                             "description": f"testssl.sh flagged the TLS stack vulnerable to {vuln}.",
-                             "remediation": "Patch the TLS library; disable weak protocols/ciphers; use TLS 1.2+."})
+    findings, obs = _parse_testssl(out or "")
     return _result("testssl", cmd, rc, out, ms, findings, obs, error=err)
+
+
+# Severity per TLS vulnerability testssl.sh probes for.
+_TLS_VULNS = {
+    "Heartbleed": "critical", "ROBOT": "high", "Ticketbleed": "high", "CCS": "high",
+    "CRIME": "medium", "BREACH": "medium", "POODLE": "high", "BEAST": "low",
+    "LUCKY13": "medium", "SWEET32": "medium", "FREAK": "high", "DROWN": "high",
+    "LOGJAM": "medium", "Winshock": "high",
+}
+
+
+def _parse_testssl(out):
+    """Parse testssl.sh's per-test lines into findings.
+
+    testssl prints one line per test. A SAFE result reads 'not vulnerable (OK)';
+    a real issue reads uppercase 'VULNERABLE' (sometimes 'potentially
+    VULNERABLE'). The distinction is CASE and the leading 'not' — so we match
+    the literal uppercase token 'VULNERABLE' and explicitly skip any line that
+    says 'not vulnerable'. (The old regex lower-cased everything and matched the
+    word 'vulnerable' inside 'not vulnerable (OK)', flagging every safe test.)
+    """
+    findings, obs = [], []
+    for raw in (out or "").splitlines():
+        line = raw.strip()
+        if not line or "VULNERABLE" not in line:   # case-sensitive: safe lines say "not vulnerable"
+            continue
+        if re.search(r"not\s+vulnerable", line, re.I):
+            continue
+        for name, sev in _TLS_VULNS.items():
+            if re.match(rf"{re.escape(name)}\b", line, re.I):
+                potential = "potentially" in line.lower()
+                label = f"{name} (potentially vulnerable)" if potential else name
+                obs.append(f"{name}: {'potentially vulnerable' if potential else 'vulnerable'}")
+                findings.append({
+                    "title": f"TLS vulnerability: {label}", "severity": sev, "owasp": "A02",
+                    "mitre": "T1040", "evidence": line[:300],
+                    "description": (f"testssl.sh reports the TLS stack "
+                                    f"{'potentially ' if potential else ''}vulnerable to {name}."),
+                    "remediation": "Patch the TLS library; disable weak protocols/ciphers; use TLS 1.2+."})
+                break
+    return findings, obs
 
 
 # --------------------------------------------------------- wpscan (WordPress)
