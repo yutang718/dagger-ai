@@ -295,12 +295,20 @@ def _attempt_from_tool(mod, phase, res, lang="en") -> AttemptRec:
     name, _ = MODULE_META.get(mod, (mod, mod))
     zh = lang == "zh"
     if not res.get("available", True):
+        err = str(res.get("error", "") or "")
+        # Distinguish a genuine missing tool from a runner transport/5xx error —
+        # the latter is NOT "not installed" and was previously mislabelled as such.
+        runner_err = ("runner" in err.lower()) or ("unreachable" in err.lower())
+        if runner_err:
+            tag = "[工具运行器错误] " if zh else "[tool-runner error] "
+            rat = ("工具运行器返回错误（非工具缺失）。" if zh else "Tool-runner returned an error (not a missing tool).")
+        else:
+            tag = "[工具运行器未安装此工具] " if zh else "[tool not installed in tool-runner] "
+            rat = ("该工具在工具运行器中不可用。" if zh else "Tool unavailable.")
         return AttemptRec(name, f"Run {mod}",
-                          [StepRec("tool", res.get("command", mod),
-                                   f"[tool not installed in tool-runner] {res.get('error','')}",
+                          [StepRec("tool", res.get("command", mod), tag + err,
                                    f"{phase}: {name}")],
-                          False, 0.0,
-                          rationale=("该工具在工具运行器中不可用。" if zh else "Tool unavailable."), phase=phase)
+                          False, 0.0, rationale=rat, phase=phase)
     findings = res.get("findings", []) or []
     obs = res.get("observations", []) or []
     out = (res.get("stdout", "") or "")

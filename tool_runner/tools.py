@@ -91,7 +91,12 @@ def _run(cmd, timeout):
         out = (p.stdout or "") + (("\n[stderr]\n" + p.stderr) if p.stderr else "")
         return p.returncode, out, int((time.time() - start) * 1000), None
     except subprocess.TimeoutExpired as e:
-        return None, (e.stdout or ""), int((time.time() - start) * 1000), "timeout"
+        # On timeout, TimeoutExpired.stdout stays BYTES even with text=True, so
+        # decode it — otherwise downstream str parsers raise TypeError (→ 500).
+        out = e.stdout or ""
+        if isinstance(out, (bytes, bytearray)):
+            out = bytes(out).decode("utf-8", "replace")
+        return None, out, int((time.time() - start) * 1000), "timeout"
     except Exception as e:  # noqa: BLE001
         return None, "", int((time.time() - start) * 1000), str(e)
 
@@ -609,6 +614,8 @@ def _parse_testssl(out):
     word 'vulnerable' inside 'not vulnerable (OK)', flagging every safe test.)
     """
     findings, obs = [], []
+    if isinstance(out, (bytes, bytearray)):         # defensive: never str-op on bytes
+        out = bytes(out).decode("utf-8", "replace")
     for raw in (out or "").splitlines():
         line = raw.strip()
         if not line or "VULNERABLE" not in line:   # case-sensitive: safe lines say "not vulnerable"

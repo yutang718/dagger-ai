@@ -855,14 +855,18 @@ function campaignForm(ts, existing){
         <input id="c-login-user" placeholder="${t("login.user")}" autocomplete="off">
         <input id="c-login-pass" type="password" placeholder="${t("login.pass")}" autocomplete="new-password">
       </div>
-      <div class="row" style="gap:8px">
-        <input id="c-login-uf" placeholder="${t("login.userField")}" style="font-family:var(--mono);font-size:12px">
-        <input id="c-login-pf" placeholder="${t("login.passField")}" style="font-family:var(--mono);font-size:12px">
-      </div>
-      <input id="c-login-token" placeholder="${t("login.tokenPath")}" style="font-family:var(--mono);font-size:12px;display:none">
       <div class="row" style="gap:8px;align-items:center">
         <button type="button" id="c-login-test" class="ghost">${t("login.test")}</button>
         <span id="login-test-out" class="no" style="font-size:12px"></span>
+        <span id="login-adv-toggle" class="no" style="margin-left:auto;cursor:pointer;text-decoration:underline">${t("login.advanced")} ▾</span>
+      </div>
+      <div id="login-adv" style="display:none;gap:8px;margin-top:6px">
+        <div class="no" style="font-size:12px">${t("login.advHint")}</div>
+        <div class="row" style="gap:8px">
+          <input id="c-login-uf" placeholder="${t("login.userField")}" style="font-family:var(--mono);font-size:12px">
+          <input id="c-login-pf" placeholder="${t("login.passField")}" style="font-family:var(--mono);font-size:12px">
+        </div>
+        <input id="c-login-token" placeholder="${t("login.tokenPath")}" style="font-family:var(--mono);font-size:12px;display:none">
       </div>
     </div>
     <label>${t("campaignForm.probes")} <span id="probe-domain" class="no"></span></label>
@@ -912,10 +916,14 @@ function campaignForm(ts, existing){
     $("#c-login-token").value = existing.login_token_path||"";
     if(existing.has_login_password) $("#c-login-pass").placeholder = t("login.passSaved");
   }
-  // Auto-login: show fields only when a mode is picked; token path only for bearer.
+  // Auto-login: show fields only when a mode is picked. Field-name overrides live
+  // under an "advanced" fold; bearer needs the token path, so it opens it.
   const syncLogin=()=>{ const m=$("#c-login-mode").value;
     $("#login-fields").style.display = m ? "grid" : "none";
-    $("#c-login-token").style.display = m==="bearer" ? "block" : "none"; };
+    $("#c-login-token").style.display = m==="bearer" ? "block" : "none";
+    if(m==="bearer") $("#login-adv").style.display = "grid"; };
+  $("#login-adv-toggle").onclick=()=>{ const a=$("#login-adv");
+    a.style.display = a.style.display==="none" ? "grid" : "none"; };
   $("#c-login-mode").onchange=syncLogin; syncLogin();
   $("#c-login-test").onclick = async () => {
     const out=$("#login-test-out"); out.textContent=t("login.testing"); out.className="no";
