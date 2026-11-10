@@ -229,15 +229,27 @@ button.exp:hover{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) i
   text-transform:uppercase;letter-spacing:.05em}
 .mtile .mv.sm{font-size:15px;font-family:var(--mono)}
 .spark{display:block;width:100%;height:70px}
-.feed{max-height:420px;overflow:auto;display:flex;flex-direction:column;gap:8px}
-.fev{border:1px solid var(--line);border-radius:8px;padding:9px 11px;background:var(--panel2)}
+/* ---- Live Monitor wall-board (horizontal extension) ---- */
+#main.wide{max-width:1760px}
+.mon-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);gap:18px;align-items:start}
+.mon-graph-panel #mon-graph{min-height:clamp(380px,56vh,760px)}
+.mon-feed-panel{display:flex;flex-direction:column}
+.mon-feed-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.mon-feed-head h3{margin:0}
+.mon-lat{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:var(--muted)}
+.spark-i{width:64px;height:16px;display:block;opacity:.85}
+@media(max-width:1000px){.mon-grid{grid-template-columns:1fr}.mon-graph-panel #mon-graph{min-height:340px}}
+.feed{max-height:clamp(360px,60vh,820px);overflow:auto;display:flex;flex-direction:column;gap:7px;margin-top:12px}
+.fev{border:1px solid var(--line);border-radius:8px;padding:8px 11px;background:var(--panel2)}
 .fev.ok{border-color:color-mix(in srgb,var(--crit) 45%,var(--line))}
 .pchip{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);
   background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:1px 8px;white-space:nowrap}
 .pdot{width:7px;height:7px;border-radius:50%;flex:none}
-.fev .fh{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--muted);margin-bottom:4px}
-.fev .fp{font-family:var(--mono);font-size:12px;white-space:pre-wrap;word-break:break-word;
-  max-height:46px;overflow:hidden;opacity:.92}
+.fev .fh{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--muted);margin-bottom:3px}
+.fev .fh-l{display:inline-flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}
+.fev .fh-r{white-space:nowrap;flex:none}
+.fev .fp{font-size:12px;line-height:1.45;color:var(--ink);opacity:.9;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .fev .fimp{margin-top:5px;font-size:11.5px;color:var(--crit);font-weight:600;
   display:flex;gap:5px;align-items:flex-start;line-height:1.4}
 

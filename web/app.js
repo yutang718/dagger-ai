@@ -148,6 +148,9 @@ document.querySelectorAll("nav a").forEach(a =>
 
 function show(view) {
   S.view = view; clearInterval(S.pollTimer); closeDrawer();
+  // The Live Monitor is a wall-board: let it break out of the reading-width cap
+  // and use the full horizontal space; every other view stays measured.
+  main().classList.toggle("wide", view === "monitor");
   document.querySelectorAll("nav a").forEach(x => x.classList.toggle("active", x.dataset.view === view));
   ({ dashboard: viewDashboard, targets: viewTargets, campaigns: viewCampaigns,
      playbook: viewPlaybook,
@@ -1169,8 +1172,8 @@ function renderMonitor(d, cmap, tmap){
   const r=d.run, live=["running","queued"].includes(r.status);
   const camp=cmap[r.campaign_id]||{}, tgt=tmap[camp.target_id]||{};
   const attempts=d.attempts||[];
-  const events=[]; const lat=[];
-  attempts.forEach(a=>a.steps.forEach(st=>{ lat.push(st.latency_ms||0); events.push({a, st}); }));
+  const lat=[];
+  attempts.forEach(a=>a.steps.forEach(st=>lat.push(st.latency_ms||0)));
   const done=attempts.length, succ=attempts.filter(a=>a.success).length;
   const rate=done?Math.round(succ/done*100):0;
   const avg=lat.length?Math.round(lat.reduce((x,y)=>x+y,0)/lat.length):0;
@@ -1196,11 +1199,12 @@ function renderMonitor(d, cmap, tmap){
         <div class="ml">${t("monitor.avgLatency")}</div></div>
       <div class="mtile"><div class="mv sm">${esc(cur)}</div><div class="ml">${t("monitor.currentProbe")}</div></div>
     </div>
-    <div class="grid2">
-      <div class="panel"><h3>${t("run.graphTitle")}</h3><div id="mon-graph"></div></div>
-      <div class="panel"><h3>${t("monitor.latencyTrend")}</h3>${sparkline(lat)}
-        <h3 style="margin-top:16px">${t("monitor.liveFeed")}</h3>
-        <div class="feed">${feedHtml(events)}</div></div>
+    <div class="mon-grid">
+      <div class="panel mon-graph-panel"><h3>${t("run.graphTitle")}</h3><div id="mon-graph"></div></div>
+      <div class="panel mon-feed-panel">
+        <div class="mon-feed-head"><h3>${t("monitor.liveFeed")}</h3>
+          <span class="mon-lat">${t("monitor.latencyTrend")} ${sparkInline(lat)}</span></div>
+        <div class="feed">${feedHtml(attempts)}</div></div>
     </div>`;
   $("#mon-open").onclick=()=>openRun(r.id);
   AttackGraph.render($("#mon-graph"), {attempts, targetName:tgt.name||t("monitor.target"),
@@ -1218,14 +1222,28 @@ function sparkline(vals){
     <circle cx="${n<2?0:W}" cy="${(H-last/max*(H-8)-4).toFixed(1)}" r="2.4" fill="var(--accent)"/>
   </svg><div class="no" style="font-size:11px">max ${max} ms · last ${last} ms · ${n} steps</div>`;
 }
-function feedHtml(events){
-  if(!events.length) return `<div class="no" style="font-size:12px;padding:10px 0">${t("monitor.waiting")}</div>`;
-  return events.slice().reverse().slice(0,40).map(({a,st})=>`
-    <div class="fev ${a.success?"ok":""}">
-      <div class="fh"><span>${kindBadge(a)} ${phaseChip(a)} <span class="mono">${esc(techLabel(a.technique))}</span></span>
-        <span>${st.latency_ms||0} ms ${a.success?`· <b style="color:var(--crit)">${t("monitor.exploited")}</b>`:""}</span></div>
-      <div class="fp">${esc((a.rationale||st.response||st.prompt||"").slice(0,180))}</div>
-      ${a.success&&isExploit(a)&&impactOf(a)?`<div class="fimp">▶ ${esc(impactOf(a))}</div>`:""}</div>`).join("");
+/* Compact inline sparkline (no caption) for the feed header. */
+function sparkInline(vals){
+  if(vals.length<2) return "";
+  const W=64,H=16,max=Math.max(...vals,1),n=vals.length;
+  const pts=vals.slice(-40).map((v,i,arr)=>`${(i/(arr.length-1)*W).toFixed(1)},${(H-v/max*(H-2)-1).toFixed(1)}`).join(" ");
+  return `<svg class="spark-i" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+    <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.4" vector-effect="non-scaling-stroke"/></svg>`;
+}
+/* One concise row per attempt (not per step — multi-step attempts shared one
+   rationale and showed it repeatedly). Whitespace collapsed, kept short. */
+function feedHtml(attempts){
+  if(!attempts.length) return `<div class="no" style="font-size:12px;padding:10px 0">${t("monitor.waiting")}</div>`;
+  return attempts.slice().reverse().slice(0,60).map(a=>{
+    const ms=(a.steps||[]).reduce((n,s)=>n+(s.latency_ms||0),0);
+    const raw=a.rationale||((a.steps||[])[0]||{}).response||((a.steps||[])[0]||{}).prompt||"";
+    const txt=esc(raw.replace(/\s+/g," ").trim().slice(0,130));
+    return `<div class="fev ${a.success?"ok":""}">
+      <div class="fh"><span class="fh-l">${kindBadge(a)} ${phaseChip(a)} <span class="mono">${esc(techLabel(a.technique))}</span></span>
+        <span class="fh-r">${ms?ms+" ms":""}${a.success?` · <b style="color:var(--crit)">${t("monitor.exploited")}</b>`:""}</span></div>
+      ${txt?`<div class="fp">${txt}</div>`:""}
+      ${a.success&&isExploit(a)&&impactOf(a)?`<div class="fimp">▶ ${esc(impactOf(a))}</div>`:""}</div>`;
+  }).join("");
 }
 
 /* ---------- settings (LLM config) ---------- */

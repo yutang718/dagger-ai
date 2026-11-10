@@ -72,4 +72,4 @@ MAX_TOOL_STEPS = int(_env("DAGGER_MAX_TOOL_STEPS", default="12"))
 # recon phase wall-clock sharply without adding host load of concern.
 PARALLEL_WORKERS = int(_env("DAGGER_PARALLEL_WORKERS", default="5"))
 
-VERSION = "1.13.0"
+VERSION = "1.14.0"

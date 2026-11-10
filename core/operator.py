@@ -611,9 +611,9 @@ def _validate(client, host, attempts, lang="en") -> str:
 
 
 _INTERP_SYS = (
-    _EXPERT + "Explain ONE tool's result to the team in plain language: in 1-2 sentences say what "
-    "it found, why it matters (exploitability, what it could lead to, chaining potential), or that "
-    "nothing notable was found. No preamble, no raw output, no markdown, no bullet points.")
+    _EXPERT + "Summarise ONE tool's result for the live feed in a SINGLE short sentence (<=22 words): "
+    "what it found and why it matters (exploitability / chaining), or that nothing notable turned up. "
+    "Terse and scannable. No preamble, no raw output, no markdown, no bullet points, no restating the tool name.")
 
 
 def _lang_suffix(lang: str) -> str:
@@ -626,19 +626,27 @@ def _lang_suffix(lang: str) -> str:
 
 def _interpret(client, mod, res, lang="en") -> str:
     """Ask the LLM for a short, human-readable conclusion of one tool's output,
-    so the operator doesn't just dump raw nmap/nuclei/ffuf text at the user."""
+    so the operator doesn't just dump raw nmap/nuclei/ffuf text at the user.
+
+    Cost guard: a clean recon/fingerprint step carries no finding to explain, and
+    those tools dominate the run (now fired in parallel), so we skip the LLM call
+    there and let the deterministic one-liner stand. The spend goes where it is
+    worth it — anything with a finding, and the deeper discovery/vuln/exploit work."""
     if not (client and client.online):
         return ""
-    name = MODULE_META.get(mod, (mod, mod))[0]
     findings = res.get("findings", []) or []
+    phase = MODULES.get(mod, ("", ""))[0]
+    if not findings and phase in ("recon", "fingerprint"):
+        return ""
+    name = MODULE_META.get(mod, (mod, mod))[0]
     obs = res.get("observations", []) or []
     fbrief = "; ".join(f"{f.get('severity')}: {f.get('title')}" for f in findings[:12]) \
         or "no confirmed findings"
-    obrief = "\n".join(obs[:20])[:1500]
+    obrief = "\n".join(obs[:16])[:800]
     out = client.complete(
         _INTERP_SYS + _lang_suffix(lang),
         f"Tool: {name}\nConfirmed findings: {fbrief}\nObservations:\n{obrief}\n\n"
-        "Explain in plain language what this step found and what it means.")
+        "Give the one-sentence takeaway.")
     return out.strip()
 
 
