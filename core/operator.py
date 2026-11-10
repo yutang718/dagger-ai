@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 import httpx
 
 from . import config, tools_client
-from .llm_client import LLMClient
+from .llm_client import ANALYTIC_TEMP, LLMClient
 from .probes import all_probes
 from .records import AttemptRec, StepRec
 
@@ -143,35 +143,36 @@ def _capability_catalog(modules) -> str:
 _CVE_DIGEST = re.compile(r"CVE-\d{4}-\d{3,7}", re.I)
 
 
-def _evidence_digest(attempts, cap=2200) -> str:
-    """A compact intelligence digest of what THIS run has gathered so far, so the
+def _evidence_digest(attempts, cap=9000) -> str:
+    """A rich intelligence digest of what THIS run has gathered so far, so the
     planner adapts to real evidence (not just finding counts): product/versions,
-    discovered endpoints, CVEs, and confirmed findings with short evidence."""
+    discovered endpoints, CVEs, and confirmed findings with short evidence. The
+    analytical models have very large context windows, so this is kept generous."""
     if not attempts:
         return "(nothing gathered yet)"
     lines = []
     terms = _service_terms(attempts)
     if terms:
-        lines.append("Services/versions seen: " + ", ".join(terms[:12]))
+        lines.append("Services/versions seen: " + ", ".join(terms[:24]))
     cves, endpoints, findings = set(), set(), []
     for a in attempts:
         for f in (getattr(a, "findings", None) or []):
             sev = f.get("severity", "info")
             title = f.get("title", "")
-            ev = str(f.get("evidence", ""))[:90]
+            ev = str(f.get("evidence", ""))[:140]
             findings.append(f"[{sev}] {title}" + (f" — {ev}" if ev else ""))
             cves.update(c.upper() for c in _CVE_DIGEST.findall(title + " " + ev))
         for st in (getattr(a, "steps", None) or []):
             resp = st.response or ""
             cves.update(c.upper() for c in _CVE_DIGEST.findall(resp))
-            for u in re.findall(r"https?://[^\s'\"<>]+", resp)[:40]:
-                endpoints.add(u.rstrip(".,);")[:120])
+            for u in re.findall(r"https?://[^\s'\"<>]+", resp)[:80]:
+                endpoints.add(u.rstrip(".,);")[:160])
     if cves:
-        lines.append("CVEs referenced: " + ", ".join(sorted(cves)[:20]))
+        lines.append("CVEs referenced: " + ", ".join(sorted(cves)[:40]))
     if endpoints:
-        lines.append("Endpoints/URLs seen: " + ", ".join(sorted(endpoints)[:15]))
+        lines.append("Endpoints/URLs seen: " + ", ".join(sorted(endpoints)[:40]))
     if findings:
-        lines.append("Confirmed/flagged so far:\n" + "\n".join(f"  - {x}" for x in findings[:20]))
+        lines.append("Confirmed/flagged so far:\n" + "\n".join(f"  - {x}" for x in findings[:50]))
     return ("\n".join(lines) or "(no notable evidence yet)")[:cap]
 
 
@@ -530,7 +531,8 @@ def _plan(client, url, host, chosen, lang="en", prior_profile=""):
                      "plan from this, don't re-discover what is already known):\n" + intel + "\n")
         else:
             user += "\nPRIOR INTELLIGENCE: none — this is a first look at the target.\n"
-        out = client.complete(_PLAN_SYS + _lang_suffix(lang), user)
+        out = client.complete(_PLAN_SYS + _lang_suffix(lang), user,
+                              temperature=ANALYTIC_TEMP, max_tokens=4096)
         if out.strip():
             return out.strip()
     phases = " → ".join(dict.fromkeys(MODULES[m][0] for m in chosen))
@@ -549,7 +551,8 @@ def _summary(client, host, attempts, lang="en"):
     allf = [f for a in attempts for f in a.findings]
     if client.online and allf:
         brief = "\n".join(f"- [{f.get('severity')}] {f.get('title')} ({f.get('owasp','')})" for f in allf[:40])
-        out = client.complete(_SUM_SYS + _lang_suffix(lang), f"Host: {host}\nFindings:\n{brief}")
+        out = client.complete(_SUM_SYS + _lang_suffix(lang), f"Host: {host}\nFindings:\n{brief}",
+                              temperature=ANALYTIC_TEMP, max_tokens=2048)
         if out.strip():
             return out.strip()
     if not allf:
@@ -589,7 +592,8 @@ _VAL_SYS = (
     + _PLAIN)
 
 
-def _next_action(client, url, host, remaining, ran, attempts=None, prior_profile="", plan="") -> dict:
+def _next_action(client, url, host, remaining, ran, attempts=None, prior_profile="", plan="",
+                 decisions=None) -> dict:
     catalog = _capability_catalog(remaining)
     ran_txt = "\n".join(f"  - {m}: {n} finding(s)" for m, n in ran) or "  (nothing run yet)"
     intel = (prior_profile or "").strip()
@@ -597,7 +601,15 @@ def _next_action(client, url, host, remaining, ran, attempts=None, prior_profile
     plan = (plan or "").strip()
     user = f"Target: {url} (host {host})\nPhase order: {' -> '.join(PHASE_ORDER)}\n\n"
     if plan:
-        user += "YOUR ATTACK PLAN for this engagement (execute it, adapt on evidence):\n" + plan[:2600] + "\n\n"
+        user += "YOUR ATTACK PLAN for this engagement (execute it, adapt on evidence):\n" + plan[:6000] + "\n\n"
+    # Working memory: the agent's own recent moves and why, so it builds on its
+    # reasoning instead of re-deriving every step and does not loop on dead ends.
+    if decisions:
+        mem = "\n".join(
+            f"  {i+1}. {d['mod']} — {d.get('reason','')[:160]} -> "
+            f"{'FOUND ' + str(d['hits']) if d.get('hits') else 'nothing'}"
+            for i, d in enumerate(decisions[-12:]))
+        user += "YOUR RECENT DECISIONS (newest last — do not repeat a dead end):\n" + mem + "\n\n"
     user += (f"Modules still available (pick one of these ids):\n{catalog}\n\n"
              f"Already run this engagement:\n{ran_txt}\n\n"
              f"EVIDENCE gathered this run:\n{digest}\n")
@@ -609,6 +621,29 @@ def _next_action(client, url, host, remaining, ran, attempts=None, prior_profile
     return data or {}
 
 
+_REPLAN_SYS = (_EXPERT +
+    "New evidence has arrived mid-engagement. Given YOUR ORIGINAL PLAN and the NEW EVIDENCE, "
+    "REVISE the plan: state briefly what the evidence changes, which attack path is now the "
+    "priority and why, and the concrete next moves (tools + what would confirm impact). Keep what "
+    "still holds; drop what the evidence killed. <=220 words. No preamble. " + _PLAIN)
+
+
+def _replan(client, url, host, plan, attempts, lang="en", prior_profile=""):
+    """One focused plan revision when the engagement turns up a real finding, so
+    the strategy adapts to what was actually discovered instead of staying frozen
+    at the first-look plan. Returns the revised plan text (or the original on failure)."""
+    if not (client and client.online):
+        return plan
+    digest = _evidence_digest(attempts or [])
+    user = (f"Target: {url} (host {host})\n\nYOUR ORIGINAL PLAN:\n{(plan or '')[:6000]}\n\n"
+            f"NEW EVIDENCE gathered so far this run:\n{digest}\n")
+    if prior_profile:
+        user += "\nPRIOR INTELLIGENCE:\n" + prior_profile.strip()[:4000] + "\n"
+    out = client.complete(_REPLAN_SYS + _lang_suffix(lang), user,
+                          temperature=ANALYTIC_TEMP, max_tokens=2048)
+    return out.strip() or plan
+
+
 def _validate(client, host, attempts, lang="en") -> str:
     allf = [f for a in attempts for f in a.findings]
     if not allf:
@@ -616,7 +651,8 @@ def _validate(client, host, attempts, lang="en") -> str:
     brief = "\n".join(
         f"- [{f.get('severity')}] {f.get('title')} ({f.get('owasp','')}) "
         f"evidence: {str(f.get('evidence',''))[:80]}" for f in allf[:40])
-    return client.complete(_VAL_SYS + _lang_suffix(lang), f"Host: {host}\nFindings:\n{brief}").strip()
+    return client.complete(_VAL_SYS + _lang_suffix(lang), f"Host: {host}\nFindings:\n{brief}",
+                           temperature=ANALYTIC_TEMP, max_tokens=1536).strip()
 
 
 _INTERP_SYS = (
@@ -655,7 +691,8 @@ def _interpret(client, mod, res, lang="en") -> str:
     out = client.complete(
         _INTERP_SYS + _lang_suffix(lang),
         f"Tool: {name}\nConfirmed findings: {fbrief}\nObservations:\n{obrief}\n\n"
-        "Give the one-sentence takeaway.")
+        "Give the one-sentence takeaway.",
+        temperature=ANALYTIC_TEMP, max_tokens=160)
     return out.strip()
 
 
@@ -774,6 +811,8 @@ def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
 
     run_set: set[str] = set()
     ran: list[tuple[str, int]] = []
+    decisions: list[dict] = []   # working memory: what the agent chose, why, payoff
+    replanned = False            # one adaptive re-plan per engagement (cost guard)
 
     # 1b) PARALLEL RECON — fire every independent recon/fingerprint gatherer at
     #     once. They are read-only collectors with no ordering dependency, so
@@ -811,7 +850,8 @@ def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
         remaining = [m for m in candidates if m not in run_set]
         if not remaining:
             break
-        decision = _next_action(client, url, host, remaining, ran, attempts, prior_profile, plan_txt)
+        decision = _next_action(client, url, host, remaining, ran, attempts, prior_profile,
+                                plan_txt, decisions)
         done = bool(decision.get("done"))
         mod = (decision.get("module") or "").strip()
         reason = (decision.get("reason") or "").strip()
@@ -839,6 +879,20 @@ def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
         for a in recs:
             _emit(attempts, a, on_attempt)
         ran.append((mod, hits))
+        decisions.append({"mod": mod, "reason": reason, "hits": hits})
+
+        # 2a) ADAPTIVE RE-PLAN — the first real finding changes the picture, so
+        #     revise the strategy once (bounded) and let the rest of the loop
+        #     execute the updated plan instead of the frozen first-look one.
+        if hits and not replanned and not (cancelled and cancelled()):
+            replanned = True
+            new_plan = _replan(client, url, host, plan_txt, attempts, lang, prior_profile)
+            if new_plan and new_plan != plan_txt:
+                plan_txt = new_plan
+                _emit(attempts, AttemptRec(
+                    "engagement-plan", f"Revise the plan for {host} on new evidence",
+                    [StepRec("plan", f"re-plan after finding via {mod}", plan_txt,
+                             "AI operator re-plan")], False, 0.0, phase="plan"), on_attempt)
 
     # 2b) AUTO-VERIFY — for EVERY discovered vuln (not just PHP), actively try to
     #     confirm it with a benign PoC; scanner-only CVEs are flagged for manual work.

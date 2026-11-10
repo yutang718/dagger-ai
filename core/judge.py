@@ -21,7 +21,7 @@ _JUDGE_SYS = (
 
 
 def judge(probe: Probe, objective: str, response: str, client: LLMClient | None = None) -> JudgeResult:
-    client = client or LLMClient.attacker()
+    client = client or LLMClient.judge()
     if client.online:
         data = client.complete_json(
             _JUDGE_SYS,

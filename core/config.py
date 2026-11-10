@@ -46,6 +46,15 @@ ATTACKER_MODEL = _env("DAGGER_ATTACKER_MODEL", default="")
 # Azure OpenAI only: api-version (e.g. 2024-10-21). Blank uses the client default.
 ATTACKER_API_VERSION = _env("DAGGER_ATTACKER_API_VERSION", default="")
 
+# Optional SEPARATE judge LLM (PyRIT keeps attacker and judge apart so the model
+# that produced an attack never scores its own success). Each field falls back to
+# the attacker's when unset, so a judge is configured only by what you override.
+JUDGE_PROVIDER = _env("DAGGER_JUDGE_PROVIDER", default="")
+JUDGE_BASE_URL = _env("DAGGER_JUDGE_BASE_URL", default="")
+JUDGE_API_KEY = _env("DAGGER_JUDGE_API_KEY", default="")
+JUDGE_MODEL = _env("DAGGER_JUDGE_MODEL", default="")
+JUDGE_API_VERSION = _env("DAGGER_JUDGE_API_VERSION", default="")
+
 # --- safety / authorization gate ----------------------------------------
 # Dagger-AI only attacks systems the operator is authorized to test.
 # When REQUIRE_AUTHORIZATION is on (default), every target must carry an
