@@ -484,13 +484,28 @@ _EXPERT = ("You are a CREST-certified (CCT APP & INF) senior penetration tester 
            "chains and business impact, distinguish genuinely exploitable issues from noise, cite "
            "concrete evidence, and never overstate confidence. This is an AUTHORIZED, scoped engagement. ")
 
-_PLAN_SYS = (_EXPERT + "Plan the engagement like a lead tester scoping real work. You are given the "
-             "target, the FULL capability catalog you may use (grouped by kill-chain phase), and any "
-             "PRIOR INTELLIGENCE already gathered on this target from earlier scans. Write a concise, "
-             "ordered plan (<=150 words): what each phase establishes, which capabilities you will lean "
-             "on first given what is already known, which observations would make you pivot or pull in a "
-             "deeper tool, and the highest-value checks for THIS target. If prior intelligence already "
-             "shows a stack, WAF, CVEs or exposed surface, say how it changes your approach. No preamble.")
+_PLAN_SYS = (_EXPERT +
+    "Produce the ENGAGEMENT ATTACK PLAN a lead tester writes before touching the target — a real plan, "
+    "not a generic methodology recital. Plan over the FULL arsenal: both the integrated capability "
+    "catalog you are given AND the external tools a senior tester reaches for (e.g. Burp Suite, sqlmap, "
+    "Metasploit, Hydra, ffuf, CrackMapExec, BloodHound, a hand-written PoC) — name an external tool where "
+    "it is the right instrument and mark it (external). Ground EVERY decision in the PRIOR INTELLIGENCE: "
+    "cite the specific observed port / service / version / component / CVE / WAF / path / finding that "
+    "drives it, and do NOT plan to re-discover what is already known. Be concrete to THIS target; a plan "
+    "that would read the same for any host is a failure.\n"
+    "Structure it with these headers (tight prose or bullets under each):\n"
+    "1. Attack surface — what the intel establishes: exposed services, tech stack, auth/trust boundaries, "
+    "the most exposed entry points.\n"
+    "2. Prioritised attack paths — RANKED by (likelihood exploitable x business impact). For each: the "
+    "hypothesis, the exact evidence it rests on, the capability/tool that proves it, and the result that "
+    "would confirm or kill it.\n"
+    "3. Attack chains — how individual weaknesses combine to escalate (initial access -> foothold -> "
+    "privilege / data / impact) and the realistic worst case.\n"
+    "4. Phased execution — recon -> fingerprint -> discovery -> vuln -> exploit: which capabilities you "
+    "LEAD with given what is already known, and what you deliberately skip because the intel answers it.\n"
+    "5. Pivot & stop criteria — the observations that would change the plan or pull a deeper tool forward, "
+    "and what 'done' looks like.\n"
+    "<=420 words. No preamble, no sign-off.")
 _SUM_SYS = (_EXPERT + "Write the executive summary: the overall risk posture, the most critical "
             "issues, any realistic ATTACK CHAIN leading to high impact, and the top remediation "
             "priorities in order. Clear for management, precise for engineers. <=180 words. No preamble.")
@@ -545,9 +560,12 @@ def _summary(client, host, attempts, lang="en"):
 
 # ============================================================ agentic loop
 _NEXT_SYS = (
-    _EXPERT + "You are driving the engagement tool-by-tool, adapting to real evidence. You are given "
-    "the capability catalog of modules still available, the PRIOR INTELLIGENCE on this target, and the "
-    "EVIDENCE gathered so far this run. Choose the single most valuable NEXT module — prioritise by what "
+    _EXPERT + "You are EXECUTING the engagement attack plan tool-by-tool, adapting to real evidence. You "
+    "are given the ATTACK PLAN you drew up, the capability catalog of modules still available, the PRIOR "
+    "INTELLIGENCE on this target, and the EVIDENCE gathered so far this run. Advance the plan's highest "
+    "priority attack path that is not yet resolved; deviate from it only when the evidence makes a "
+    "different move clearly more valuable (say so in the reason). Choose the single most valuable NEXT "
+    "module — prioritise by what "
     "the current evidence suggests is most likely exploitable and impactful, generally following the "
     "kill-chain order (recon → fingerprint → discovery → vuln → exploit) but pulling a deeper/targeted "
     "tool forward when evidence justifies it (e.g. a WordPress banner → cms_wpscan; a product+version → "
@@ -562,18 +580,22 @@ _VAL_SYS = (
     "combine to escalate impact); and give the top remediation priorities in order. <=170 words. No preamble.")
 
 
-def _next_action(client, url, host, remaining, ran, attempts=None, prior_profile="") -> dict:
+def _next_action(client, url, host, remaining, ran, attempts=None, prior_profile="", plan="") -> dict:
     catalog = _capability_catalog(remaining)
     ran_txt = "\n".join(f"  - {m}: {n} finding(s)" for m, n in ran) or "  (nothing run yet)"
     intel = (prior_profile or "").strip()
     digest = _evidence_digest(attempts or [])
-    user = (f"Target: {url} (host {host})\nPhase order: {' -> '.join(PHASE_ORDER)}\n\n"
-            f"Modules still available (pick one of these ids):\n{catalog}\n\n"
-            f"Already run this engagement:\n{ran_txt}\n\n"
-            f"EVIDENCE gathered this run:\n{digest}\n")
+    plan = (plan or "").strip()
+    user = f"Target: {url} (host {host})\nPhase order: {' -> '.join(PHASE_ORDER)}\n\n"
+    if plan:
+        user += "YOUR ATTACK PLAN for this engagement (execute it, adapt on evidence):\n" + plan[:2600] + "\n\n"
+    user += (f"Modules still available (pick one of these ids):\n{catalog}\n\n"
+             f"Already run this engagement:\n{ran_txt}\n\n"
+             f"EVIDENCE gathered this run:\n{digest}\n")
     if intel:
         user += "\nPRIOR INTELLIGENCE on this target (earlier scans):\n" + intel + "\n"
-    user += "\nChoose the next module id to run now, or answer done=true if the engagement is complete."
+    user += ("\nChoose the next module id that best advances the plan now, or answer done=true if the "
+             "plan's attack paths are exhausted and nothing in the evidence warrants further action.")
     data = client.complete_json(_NEXT_SYS, user)
     return data or {}
 
@@ -722,7 +744,7 @@ def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
         remaining = [m for m in candidates if m not in run_set]
         if not remaining:
             break
-        decision = _next_action(client, url, host, remaining, ran, attempts, prior_profile)
+        decision = _next_action(client, url, host, remaining, ran, attempts, prior_profile, plan_txt)
         done = bool(decision.get("done"))
         mod = (decision.get("module") or "").strip()
         reason = (decision.get("reason") or "").strip()
