@@ -700,6 +700,8 @@ async function openProfile(id){
   let p; try{ p=await api(`/targets/${id}/profile`); }catch(e){ toast(e.message); return; }
   const chips=a=>a.length?a.map(s=>`<span class="tag">${esc(s)}</span>`).join(" "):`<span class="no">—</span>`;
   const sec=(title,body)=>`<div class="lab" style="margin-top:14px">${title}</div>${body}`;
+  const secIf=(title,arr,count)=>{ const a=arr||[]; return a.length
+    ? sec(title+(count?` (${a.length})`:""),chips(a)) : ""; };
   const ports=p.ports.length?`<table><thead><tr><th>${t("bom.port")}</th><th>${t("bom.service")}</th>
       <th>${t("bom.product")}</th></tr></thead><tbody>${p.ports.map(x=>`<tr>
       <td class="mono">${x.port}/${x.proto}</td><td>${esc(x.service)}</td>
@@ -729,6 +731,11 @@ async function openProfile(id){
     ${sec(t("bom.os"),chips(p.os))}
     ${sec(t("bom.webServer"),web)}
     ${sec(t("bom.components")+` (${p.components.length})`,comps)}
+    ${secIf(t("bom.waf"),p.waf)}
+    ${secIf(t("bom.tls"),p.tls_issues)}
+    ${secIf(t("bom.subdomains"),p.subdomains,true)}
+    ${secIf(t("bom.cves"),p.cves,true)}
+    ${secIf(t("bom.emails"),p.emails,true)}
     ${sec(t("bom.paths")+` (${p.paths.length})`,paths)}
     ${sec(t("bom.endpoints"),chips(p.endpoints))}`);
 }

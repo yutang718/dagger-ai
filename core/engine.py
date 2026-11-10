@@ -12,7 +12,9 @@ from datetime import datetime
 
 import httpx
 
-from . import config, taxonomy
+from sqlalchemy import select
+
+from . import config, profile, taxonomy
 from .db import SessionLocal
 from .models import Attempt, Campaign, Finding, Run, Step, Target
 from .orchestrators import AttackerAgent
@@ -21,6 +23,34 @@ from .probes import get as get_probe
 from .targets import TargetClient
 
 _RUNNING: set[int] = set()
+
+
+def _accumulated_profile(db, target: Target, exclude_run_id: int | None = None) -> dict:
+    """Build this target's intel profile from EVERY prior engagement, so each new
+    scan starts from the latest accumulated picture (ports, stack, WAF, subdomains,
+    CVEs, discovered paths, confirmed findings). Mirrors the /profile endpoint."""
+    camp_ids = list(db.scalars(select(Campaign.id).where(Campaign.target_id == target.id)))
+    if not camp_ids:
+        return {}
+    run_q = select(Run.id).where(Run.campaign_id.in_(camp_ids))
+    if exclude_run_id is not None:
+        run_q = run_q.where(Run.id != exclude_run_id)
+    run_ids = list(db.scalars(run_q))
+    if not run_ids:
+        return {}
+    blobs, findings, sev = [], [], {}
+    for (resp,) in db.execute(select(Step.response).join(Attempt, Step.attempt_id == Attempt.id)
+                              .where(Attempt.run_id.in_(run_ids)).limit(5000)):
+        if resp:
+            blobs.append(resp)
+    for f in db.scalars(select(Finding).where(Finding.run_id.in_(run_ids))):
+        findings.append({"title": f.title, "severity": f.severity, "owasp": f.owasp,
+                         "evidence": f.evidence})
+        sev[f.severity] = sev.get(f.severity, 0) + 1
+    prof = profile.build_profile(target.endpoint or "", blobs, findings)
+    prof["findings_by_sev"] = sev
+    prof["runs"] = len(run_ids)
+    return prof
 
 
 def start_run(run_id: int, lang: str = "en") -> None:
@@ -78,13 +108,17 @@ def _execute(run_id: int, lang: str = "en") -> None:
             def _emit_host(a):
                 _persist(db, run_id, a, None, ctx)
                 db.commit()
+            # Feed the accumulated target profile (from all prior scans) into the
+            # planner so this engagement starts from the latest known picture.
+            prior_brief = profile.profile_brief(
+                _accumulated_profile(db, target, exclude_run_id=run_id), lang)
             operator.run_engagement(
                 target.endpoint or "", campaign.probes or list(operator.MODULES),
                 bool(target.allow_internal),
                 min(campaign.max_turns or config.MAX_TOOL_STEPS, config.MAX_TOOL_STEPS),
                 attacker.client, on_attempt=_emit_host,
                 cancelled=lambda: run_id not in _RUNNING, lang=lang,
-                cookies=_raw_cookies, authz=_authz)
+                cookies=_raw_cookies, authz=_authz, prior_profile=prior_brief)
             if run_id not in _RUNNING:
                 run.status = "stopped"
         else:

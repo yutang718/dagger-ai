@@ -29,6 +29,14 @@ _OS = re.compile(r"\(([^)]*(?:Ubuntu|Debian|Unix|Linux|CentOS|Red ?Hat|RHEL|Wind
 _PATH = re.compile(r"Sensitive path exposed:\s*(\S+)")
 _URL = re.compile(r"https?://[^\s'\"<>]+")
 _VERNUM = re.compile(r"\d+\.\d+(?:\.\d+)?")
+# Systematic intel: subdomains, emails, WAF vendor, TLS notes, CVE ids.
+_EMAIL = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
+_CVE = re.compile(r"\bCVE-\d{4}-\d{3,7}\b", re.I)
+_WAF = re.compile(r"\b(cloudflare|akamai|incapsula|imperva|sucuri|f5|big-?ip|mod_?security|"
+                  r"aws\s?waf|awswaf|barracuda|fortiweb|wordfence|wallarm|fastly|azure\s?waf)\b", re.I)
+_HOSTNAME = re.compile(r"\b((?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.){1,}[a-z]{2,})\b", re.I)
+# TLS vulnerability titles the testssl/sslscan wrappers emit.
+_TLS_ISSUE = re.compile(r"TLS vulnerability:\s*([A-Za-z0-9 ()]+)")
 
 # Technologies worth surfacing (lower-case). Matched exact or as a substring.
 _KNOWN_TECH = {
@@ -95,23 +103,58 @@ def _is_tech(name: str) -> bool:
 def _clean_server(val: str) -> str:
     # strip everything from the next "header:" onward (responses are header-joined)
     val = re.split(r"\s+[A-Za-z][A-Za-z0-9\-]+:\s", val.strip())[0].strip()
-    return val[:60]
+    return _sane_banner(val)[:60]
+
+
+# Signatures of ASCII-art / figlet banners (e.g. theHarvester's logo) and other
+# non-data noise that must never be surfaced as an asset value.
+_ARTISH = re.compile(r"[|\\/_]{2,}|[╗╚═│┌┐└┘╔╝*]{2,}|\\[Vv_]|[/\\]\s*[/\\]")
+
+
+def _sane_banner(s: str) -> str:
+    """Return the string only if it reads like a real banner/token — not ASCII
+    art, a box-drawing logo, or a symbol-dense fragment. Else ''."""
+    s = (s or "").strip()
+    if not s or "\n" in s or "\r" in s:
+        return ""
+    if _ARTISH.search(s):
+        return ""
+    letters = sum(c.isalnum() for c in s)
+    symbols = sum((not c.isalnum()) and (not c.isspace()) for c in s)
+    if letters < 2 or (symbols >= 4 and symbols >= letters):
+        return ""
+    return s
 
 
 def build_profile(endpoint: str, blobs: list[str], findings: list[dict]) -> dict:
     text = "\n".join(b for b in blobs if b)[:300000]
 
+    # Ports: parse LINE BY LINE so a match can never span a newline and pull the
+    # next line's "443/tcp" in as this port's service (the old whole-text regex did
+    # exactly that). Only genuine single-port nmap-style lines are accepted.
     ports = {}
-    for m in _PORT.finditer(text):
-        pid, proto = m.group(1), m.group(2)
-        svc = (m.group(3) or "").strip()
-        rest = (m.group(4) or "").strip()
-        ports[(pid, proto)] = {"port": int(pid), "proto": proto,
-                               "service": svc or "?", "product": _clean_server(rest)}
+    for line in text.splitlines():
+        m = re.match(r"\s*(\d{1,5})/(tcp|udp)\s+open\b\s*(.*)", line)
+        if not m:
+            continue
+        pid, proto, rest = m.group(1), m.group(2), (m.group(3) or "").strip()
+        if int(pid) > 65535:
+            continue
+        if re.search(r"\d{1,5}/(tcp|udp)", rest):     # prose listing several ports → skip
+            continue
+        rest = re.sub(r"^[—:\-]+\s*", "", rest)
+        toks = rest.split()
+        svc, product = "?", ""
+        if toks and re.fullmatch(r"[A-Za-z][A-Za-z0-9\-_+.]*", toks[0]):
+            svc, product = toks[0], _clean_server(" ".join(toks[1:]))
+        else:
+            product = _clean_server(rest)
+        ports[(pid, proto)] = {"port": int(pid), "proto": proto, "service": svc, "product": product}
 
     servers = {s for s in (_clean_server(m.group(1)) for m in _SERVER.finditer(text)) if s}
     powered = {p for p in (_clean_server(m.group(1)) for m in _POWERED.finditer(text)) if p}
-    os_hints = {h for h in (m.group(1).strip()[:48] for m in _OS.finditer(text)) if not _UA_OS.search(h)}
+    os_hints = {h for h in (_sane_banner(m.group(1).strip()[:48])
+                            for m in _OS.finditer(text)) if h and not _UA_OS.search(h)}
 
     comps: dict[str, dict] = {}
     for m in _WHATWEB.finditer(text):      # whatweb "Name[version]"
@@ -157,6 +200,24 @@ def build_profile(endpoint: str, blobs: list[str], findings: list[dict]) -> dict
         except Exception:
             pass
 
+    # Systematic intel dimensions ----------------------------------------
+    apex = _apex(urlparse(endpoint).hostname or endpoint or "")
+    subdomains = set()
+    if apex:
+        for m in _HOSTNAME.finditer(text):
+            h = m.group(1).lower().strip(".")
+            if h.endswith("." + apex) and h != apex and not _VERNUM.fullmatch(h):
+                subdomains.add(h)
+    emails = {e.lower() for e in _EMAIL.findall(text)
+              if not e.lower().endswith((".png", ".jpg", ".svg", ".gif", ".js", ".css"))}
+    waf = sorted({_disp_waf(m.group(1)) for m in _WAF.finditer(text)})
+    cves = sorted({c.upper() for c in _CVE.findall(text)})
+    tls_issues = sorted({m.group(1).strip() for m in _TLS_ISSUE.finditer(text)})
+    for f in findings or []:
+        blob = (f.get("title", "") + " " + str(f.get("evidence", "")))
+        cves.extend(c.upper() for c in _CVE.findall(blob))
+    cves = sorted(set(cves))
+
     return {
         "endpoint": endpoint,
         "ports": sorted(ports.values(), key=lambda p: p["port"]),
@@ -166,4 +227,58 @@ def build_profile(endpoint: str, blobs: list[str], findings: list[dict]) -> dict
         "components": sorted(comps.values(), key=lambda c: c["name"].lower())[:50],
         "paths": sorted(p for p in paths if p)[:80],
         "endpoints": sorted(endpoints)[:20],
+        "subdomains": sorted(subdomains)[:60],
+        "emails": sorted(emails)[:40],
+        "waf": waf,
+        "tls_issues": tls_issues,
+        "cves": cves[:60],
     }
+
+
+def _apex(host: str) -> str:
+    """Best-effort registrable domain (last two labels) for subdomain grouping.
+    Good enough to group scan-observed hostnames; not a public-suffix lookup."""
+    host = (host or "").strip().strip(".").lower()
+    if not host or re.fullmatch(r"[\d.]+", host):   # empty or bare IP
+        return ""
+    parts = host.split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else host
+
+
+_WAF_DISP = {"big-ip": "F5 BIG-IP", "bigip": "F5 BIG-IP", "mod_security": "ModSecurity",
+             "modsecurity": "ModSecurity", "aws waf": "AWS WAF", "awswaf": "AWS WAF",
+             "azure waf": "Azure WAF", "f5": "F5"}
+
+
+def _disp_waf(v: str) -> str:
+    low = v.lower().strip()
+    return _WAF_DISP.get(low, low[:1].upper() + low[1:])
+
+
+def profile_brief(prof: dict, lang: str = "en") -> str:
+    """A compact, LLM-friendly intelligence briefing of what is already known
+    about this target (across all prior scans). Empty string when nothing known."""
+    if not prof:
+        return ""
+    lines = []
+    def add(label, items, fmt=lambda x: x, cap=12):
+        vals = [fmt(x) for x in (items or [])][:cap]
+        if vals:
+            lines.append(f"{label}: " + ", ".join(str(v) for v in vals))
+    add("Open ports", prof.get("ports"), lambda p: f"{p['port']}/{p.get('proto','tcp')} "
+        f"{p.get('service','')} {p.get('product','')}".strip())
+    add("Web servers", prof.get("web_servers"))
+    add("Powered-by", prof.get("powered_by"))
+    add("OS hints", prof.get("os"))
+    add("Tech components", prof.get("components"),
+        lambda c: f"{c['name']}{(' ' + c['version']) if c.get('version') else ''}")
+    add("WAF", prof.get("waf"))
+    add("TLS issues", prof.get("tls_issues"))
+    add("Subdomains", prof.get("subdomains"), cap=20)
+    add("Emails", prof.get("emails"), cap=10)
+    add("CVEs seen", prof.get("cves"), cap=20)
+    add("Discovered paths", prof.get("paths"), cap=25)
+    sev = prof.get("findings_by_sev") or {}
+    if sev:
+        lines.append("Confirmed so far: " + ", ".join(f"{n} {s}" for s, n in sev.items() if n))
+    return "\n".join(lines)

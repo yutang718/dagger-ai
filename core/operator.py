@@ -122,6 +122,59 @@ def _service_terms(attempts) -> list[str]:
     return cand[:12]
 
 
+def _capability_catalog(modules) -> str:
+    """The toolbox the LLM may plan over: each candidate module with a one-line
+    description, grouped by kill-chain phase. This is 'all our capabilities'."""
+    by_phase: dict[str, list[str]] = {}
+    for m in modules:
+        if m not in MODULES:
+            continue
+        phase = MODULES[m][0]
+        desc = MODULE_META.get(m, (m, MODULES[m][1]))[0]
+        by_phase.setdefault(phase, []).append(f"  - {m}: {desc}")
+    out = []
+    for ph in PHASE_ORDER:
+        rows = by_phase.get(ph)
+        if rows:
+            out.append(f"[{ph}]\n" + "\n".join(sorted(rows)))
+    return "\n".join(out)
+
+
+_CVE_DIGEST = re.compile(r"CVE-\d{4}-\d{3,7}", re.I)
+
+
+def _evidence_digest(attempts, cap=2200) -> str:
+    """A compact intelligence digest of what THIS run has gathered so far, so the
+    planner adapts to real evidence (not just finding counts): product/versions,
+    discovered endpoints, CVEs, and confirmed findings with short evidence."""
+    if not attempts:
+        return "(nothing gathered yet)"
+    lines = []
+    terms = _service_terms(attempts)
+    if terms:
+        lines.append("Services/versions seen: " + ", ".join(terms[:12]))
+    cves, endpoints, findings = set(), set(), []
+    for a in attempts:
+        for f in (getattr(a, "findings", None) or []):
+            sev = f.get("severity", "info")
+            title = f.get("title", "")
+            ev = str(f.get("evidence", ""))[:90]
+            findings.append(f"[{sev}] {title}" + (f" — {ev}" if ev else ""))
+            cves.update(c.upper() for c in _CVE_DIGEST.findall(title + " " + ev))
+        for st in (getattr(a, "steps", None) or []):
+            resp = st.response or ""
+            cves.update(c.upper() for c in _CVE_DIGEST.findall(resp))
+            for u in re.findall(r"https?://[^\s'\"<>]+", resp)[:40]:
+                endpoints.add(u.rstrip(".,);")[:120])
+    if cves:
+        lines.append("CVEs referenced: " + ", ".join(sorted(cves)[:20]))
+    if endpoints:
+        lines.append("Endpoints/URLs seen: " + ", ".join(sorted(endpoints)[:15]))
+    if findings:
+        lines.append("Confirmed/flagged so far:\n" + "\n".join(f"  - {x}" for x in findings[:20]))
+    return ("\n".join(lines) or "(no notable evidence yet)")[:cap]
+
+
 def _tool_invocation(tool: str, url: str, host: str, attempts=None):
     """(target, options) for a tool: host-oriented tools get the bare host,
     searchsploit gets service/version terms gathered from prior attempts, and
@@ -161,7 +214,7 @@ def _select_for_target(chosen, host):
 
 
 def run_engagement(endpoint, selected, allow_internal, max_steps, client: LLMClient | None = None,
-                   on_attempt=None, cancelled=None, lang="en", cookies="", authz=""):
+                   on_attempt=None, cancelled=None, lang="en", cookies="", authz="", prior_profile=""):
     """Dispatch: an LLM-driven closed loop when an attacker LLM is online
     (plan → choose next action from results → execute → validate → re-plan →
     summarise), else the deterministic default playbook.
@@ -176,9 +229,9 @@ def run_engagement(endpoint, selected, allow_internal, max_steps, client: LLMCli
     ck = tools_client.cookie_header(cookies)
     if client.online:
         return _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
-                                   on_attempt, cancelled, lang, ck, authz)
+                                   on_attempt, cancelled, lang, ck, authz, prior_profile)
     return _playbook_engagement(client, url, host, selected, allow_internal, max_steps,
-                                on_attempt, cancelled, lang, ck, authz)
+                                on_attempt, cancelled, lang, ck, authz, prior_profile)
 
 
 def _emit(attempts, a, on_attempt):
@@ -192,13 +245,14 @@ def _emit(attempts, a, on_attempt):
 
 
 def _playbook_engagement(client, url, host, selected, allow_internal, max_steps,
-                         on_attempt=None, cancelled=None, lang="en", cookies="", authz=""):
+                         on_attempt=None, cancelled=None, lang="en", cookies="", authz="",
+                         prior_profile=""):
     attempts: list[AttemptRec] = []
 
     # ---- AI plan (or deterministic note) ----
     chosen = [m for m in MODULES if m in selected] or list(MODULES)
     chosen = _select_for_target(chosen, host)
-    plan_txt = _plan(client, url, host, chosen, lang)
+    plan_txt = _plan(client, url, host, chosen, lang, prior_profile)
     _emit(attempts, AttemptRec("engagement-plan", f"Plan an authorized assessment of {host}",
                                [StepRec("plan", f"target={url}  scope-host={host}", plan_txt,
                                         "AI operator plan" if client.online else "default playbook")],
@@ -422,19 +476,30 @@ _EXPERT = ("You are a CREST-certified (CCT APP & INF) senior penetration tester 
            "chains and business impact, distinguish genuinely exploitable issues from noise, cite "
            "concrete evidence, and never overstate confidence. This is an AUTHORIZED, scoped engagement. ")
 
-_PLAN_SYS = (_EXPERT + "Plan the engagement: given the target and the available modules, write a "
-             "concise, ordered plan (<=130 words) — what each phase establishes, which results would "
-             "change your approach, and the highest-value checks for this target type. No preamble.")
+_PLAN_SYS = (_EXPERT + "Plan the engagement like a lead tester scoping real work. You are given the "
+             "target, the FULL capability catalog you may use (grouped by kill-chain phase), and any "
+             "PRIOR INTELLIGENCE already gathered on this target from earlier scans. Write a concise, "
+             "ordered plan (<=150 words): what each phase establishes, which capabilities you will lean "
+             "on first given what is already known, which observations would make you pivot or pull in a "
+             "deeper tool, and the highest-value checks for THIS target. If prior intelligence already "
+             "shows a stack, WAF, CVEs or exposed surface, say how it changes your approach. No preamble.")
 _SUM_SYS = (_EXPERT + "Write the executive summary: the overall risk posture, the most critical "
             "issues, any realistic ATTACK CHAIN leading to high impact, and the top remediation "
             "priorities in order. Clear for management, precise for engineers. <=180 words. No preamble.")
 
 
-def _plan(client, url, host, chosen, lang="en"):
+def _plan(client, url, host, chosen, lang="en", prior_profile=""):
     if client.online:
-        mods = ", ".join(chosen)
-        out = client.complete(_PLAN_SYS + _lang_suffix(lang),
-                              f"Target: {url} (host {host})\nModules available: {mods}")
+        catalog = _capability_catalog(chosen)
+        intel = (prior_profile or "").strip()
+        user = (f"Target: {url} (host {host})\n\n"
+                f"Capability catalog (phase → modules you may use):\n{catalog}\n")
+        if intel:
+            user += ("\nPRIOR INTELLIGENCE on this target (accumulated from earlier scans — "
+                     "plan from this, don't re-discover what is already known):\n" + intel + "\n")
+        else:
+            user += "\nPRIOR INTELLIGENCE: none — this is a first look at the target.\n"
+        out = client.complete(_PLAN_SYS + _lang_suffix(lang), user)
         if out.strip():
             return out.strip()
     phases = " → ".join(dict.fromkeys(MODULES[m][0] for m in chosen))
@@ -472,25 +537,36 @@ def _summary(client, host, attempts, lang="en"):
 
 # ============================================================ agentic loop
 _NEXT_SYS = (
-    _EXPERT + "You are driving the engagement tool-by-tool. Given the modules still available and "
-    "the results so far, choose the single most valuable NEXT module — prioritise by what the "
-    "current evidence suggests is most likely exploitable and impactful, following the kill-chain "
-    "order (recon → fingerprint → discovery → vuln → exploit). "
-    'Reply ONLY with JSON: {"module": "<module_id>", "reason": "<one expert sentence>"}.')
+    _EXPERT + "You are driving the engagement tool-by-tool, adapting to real evidence. You are given "
+    "the capability catalog of modules still available, the PRIOR INTELLIGENCE on this target, and the "
+    "EVIDENCE gathered so far this run. Choose the single most valuable NEXT module — prioritise by what "
+    "the current evidence suggests is most likely exploitable and impactful, generally following the "
+    "kill-chain order (recon → fingerprint → discovery → vuln → exploit) but pulling a deeper/targeted "
+    "tool forward when evidence justifies it (e.g. a WordPress banner → cms_wpscan; a product+version → "
+    "exploits_searchsploit; discovered parameters → an injection validator). You MUST pick a module id "
+    "that appears in the catalog. Only answer done=true once the available high-value modules are "
+    "exhausted and nothing in the evidence warrants further action. "
+    'Reply ONLY with JSON: {"module": "<module_id>", "reason": "<one expert sentence>"} '
+    'or {"done": true, "reason": "<why the engagement is complete>"}.')
 _VAL_SYS = (
     _EXPERT + "VALIDATE the findings: for each, judge true-positive vs. needs-manual-verification "
     "vs. likely false-positive with brief reasoning; call out any ATTACK CHAINS (how findings "
     "combine to escalate impact); and give the top remediation priorities in order. <=170 words. No preamble.")
 
 
-def _next_action(client, url, host, remaining, ran) -> dict:
-    state = "\n".join(f"- {m}: {n} finding(s)" for m, n in ran) or "(nothing run yet)"
-    rem = ", ".join(sorted(remaining))
-    data = client.complete_json(
-        _NEXT_SYS,
-        f"Target: {url} (host {host})\nModules available: {rem}\n"
-        f"Phase order: {' -> '.join(PHASE_ORDER)}\nResults so far:\n{state}\n"
-        "Choose the next module id to run now, or \"stop\".")
+def _next_action(client, url, host, remaining, ran, attempts=None, prior_profile="") -> dict:
+    catalog = _capability_catalog(remaining)
+    ran_txt = "\n".join(f"  - {m}: {n} finding(s)" for m, n in ran) or "  (nothing run yet)"
+    intel = (prior_profile or "").strip()
+    digest = _evidence_digest(attempts or [])
+    user = (f"Target: {url} (host {host})\nPhase order: {' -> '.join(PHASE_ORDER)}\n\n"
+            f"Modules still available (pick one of these ids):\n{catalog}\n\n"
+            f"Already run this engagement:\n{ran_txt}\n\n"
+            f"EVIDENCE gathered this run:\n{digest}\n")
+    if intel:
+        user += "\nPRIOR INTELLIGENCE on this target (earlier scans):\n" + intel + "\n"
+    user += "\nChoose the next module id to run now, or answer done=true if the engagement is complete."
+    data = client.complete_json(_NEXT_SYS, user)
     return data or {}
 
 
@@ -592,35 +668,75 @@ def _run_module(mod, url, host, allow_internal, reason, client=None, lang="en", 
     return out, hits
 
 
-def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
-                        on_attempt=None, cancelled=None, lang="en", cookies="", authz=""):
-    attempts: list[AttemptRec] = []
-    chosen = [m for m in MODULES if m in selected] or list(MODULES)
-    chosen = _select_for_target(chosen, host)
+def _available_modules(host):
+    """All modules the runner can actually execute now (tool present), filtered to
+    the target type. Falls back to the full set if the runner can't be queried —
+    unavailable tools degrade gracefully to a 'not available' attempt anyway."""
+    try:
+        avail = set(tools_client.available().keys())
+    except Exception:
+        avail = set()
+    pool = [m for m, (_, tool) in MODULES.items()
+            if tool == "__builtin__" or not avail or tool in avail]
+    return _select_for_target(pool, host)
 
-    # 1) PLAN — the LLM writes the strategy.
-    plan_txt = _plan(client, url, host, chosen, lang)
+
+def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
+                        on_attempt=None, cancelled=None, lang="en", cookies="", authz="",
+                        prior_profile=""):
+    attempts: list[AttemptRec] = []
+    # Coverage floor: every module you selected runs. Candidate pool: the whole
+    # available toolbox, so the LLM can adaptively pull in a deeper capability the
+    # evidence calls for — beyond what was preselected.
+    selected_mods = _select_for_target([m for m in MODULES if m in selected] or list(MODULES), host)
+    candidates = _available_modules(host)
+    for m in selected_mods:            # ensure selection is always a candidate
+        if m not in candidates:
+            candidates.append(m)
+
+    # 1) PLAN — the LLM writes the strategy from the full catalog + prior intel.
+    plan_txt = _plan(client, url, host, candidates, lang, prior_profile)
     _emit(attempts, AttemptRec("engagement-plan", f"Plan an authorized assessment of {host}",
                                [StepRec("plan", f"target={url}  scope-host={host}", plan_txt,
                                         "AI operator plan")], False, 0.0, phase="plan"), on_attempt)
 
-    # 2) CLOSED LOOP — the LLM picks the ORDER of the next action adaptively from
-    #    results, but EVERY selected module runs (we don't let it skip modules you
-    #    chose — that caused inconsistent coverage / missed findings run-to-run).
-    remaining = set(chosen)
+    # 2) CLOSED LOOP — each step the LLM re-reads the evidence gathered so far and
+    #    picks the most valuable next module (from the whole toolbox), or declares
+    #    the engagement complete. Guards: the selection is always covered before a
+    #    "done" is honoured, and a step budget bounds adaptive exploration.
+    run_set: set[str] = set()
     ran: list[tuple[str, int]] = []
-    budget = max(max_steps, len(chosen))
-    while remaining and budget > 0:
+    budget = max(max_steps, len(selected_mods))
+    while budget > 0:
         if cancelled and cancelled():
             break
-        decision = _next_action(client, url, host, remaining, ran)
+        uncovered = [m for m in selected_mods if m not in run_set]
+        remaining = [m for m in candidates if m not in run_set]
+        if not remaining:
+            break
+        decision = _next_action(client, url, host, remaining, ran, attempts, prior_profile)
+        done = bool(decision.get("done"))
         mod = (decision.get("module") or "").strip()
         reason = (decision.get("reason") or "").strip()
-        if mod not in remaining:   # "stop"/invalid/empty → next in phase order (still cover it)
-            mod = sorted(remaining, key=lambda m: PHASE_ORDER.index(MODULES[m][0]))[0]
+        adaptive = False
+        if done:
+            if not uncovered:
+                break                       # LLM complete AND selection covered → stop
+            mod = sorted(uncovered, key=lambda m: PHASE_ORDER.index(MODULES[m][0]))[0]
+            reason = reason or "coverage floor: selected module not yet run"
+        elif mod not in run_set and mod in candidates:
+            adaptive = mod not in selected_mods   # LLM pulled in a tool beyond selection
+        else:                                # invalid/empty pick → next uncovered, else next remaining
+            pool = uncovered or remaining
+            mod = sorted(pool, key=lambda m: PHASE_ORDER.index(MODULES[m][0]))[0]
             reason = reason or "next phase in order"
-        remaining.discard(mod)
+        if mod in run_set:
+            break
+        run_set.add(mod)
         budget -= 1
+        if adaptive:
+            reason = ("adaptive (pulled in from evidence): " + reason) if reason else \
+                     "adaptive: pulled in based on evidence"
         recs, hits = _run_module(mod, url, host, allow_internal, reason, client, lang, cookies,
                                  attempts=attempts, authz=authz)
         for a in recs:
