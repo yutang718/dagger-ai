@@ -148,6 +148,16 @@ tr:hover td{background:var(--panel2)}
   border:1px solid color-mix(in srgb,var(--info) 40%,transparent)}
 .tag{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:6px;
   padding:2px 7px;font-size:11px;color:var(--muted);font-family:var(--mono)}
+.badge.cvss{font-family:var(--mono);letter-spacing:.2px;border:1px solid transparent}
+.badge.cvss-critical{background:color-mix(in srgb,var(--crit) 16%,transparent);color:var(--crit);border-color:color-mix(in srgb,var(--crit) 40%,transparent)}
+.badge.cvss-high{background:color-mix(in srgb,var(--high) 16%,transparent);color:var(--high);border-color:color-mix(in srgb,var(--high) 40%,transparent)}
+.badge.cvss-medium{background:color-mix(in srgb,var(--med) 16%,transparent);color:var(--med);border-color:color-mix(in srgb,var(--med) 40%,transparent)}
+.badge.cvss-low{background:color-mix(in srgb,var(--low) 16%,transparent);color:var(--low);border-color:color-mix(in srgb,var(--low) 40%,transparent)}
+.badge.cvss-info{background:color-mix(in srgb,var(--info) 13%,transparent);color:var(--info)}
+.tag.cwe{color:var(--ink);border-color:var(--accent)}
+button.exp{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;
+  padding:10px 16px;font-weight:600;cursor:pointer;transition:.15s}
+button.exp:hover{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
 .ok{color:var(--ok)} .no{color:var(--muted)}
 .status{font-weight:700;text-transform:capitalize}
 .status.running{color:var(--med)} .status.done{color:var(--ok)}

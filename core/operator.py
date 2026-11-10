@@ -698,6 +698,31 @@ def _run_module(mod, url, host, allow_internal, reason, client=None, lang="en", 
     return out, hits
 
 
+def _parallel_tool_runs(mods, url, host, allow_internal, cookies, authz) -> dict:
+    """Run several independent modules' tool invocations CONCURRENTLY, returning
+    {mod: result}. Only the subprocess/network wait overlaps; attempt building and
+    emission stay with the caller (single-threaded), so the shared DB session and
+    the attempts list are never touched from a worker thread."""
+    import concurrent.futures as cf
+    results: dict[str, dict] = {}
+
+    def _work(mod):
+        _, tool = MODULES[mod]
+        tgt, opts = _tool_invocation(tool, url, host, None)
+        return mod, tools_client.run(tool, tgt, options=opts, allow_internal=allow_internal,
+                                     cookies=cookies, auth_header=authz)
+
+    workers = max(1, min(len(mods), config.PARALLEL_WORKERS))
+    with cf.ThreadPoolExecutor(max_workers=workers) as ex:
+        for fut in cf.as_completed([ex.submit(_work, m) for m in mods]):
+            try:
+                m, res = fut.result()
+                results[m] = res
+            except Exception:
+                pass
+    return results
+
+
 def _available_modules(host):
     """All modules the runner can actually execute now (tool present), filtered to
     the target type. Falls back to the full set if the runner can't be queried —
@@ -730,12 +755,37 @@ def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
                                [StepRec("plan", f"target={url}  scope-host={host}", plan_txt,
                                         "AI operator plan")], False, 0.0, phase="plan"), on_attempt)
 
+    run_set: set[str] = set()
+    ran: list[tuple[str, int]] = []
+
+    # 1b) PARALLEL RECON — fire every independent recon/fingerprint gatherer at
+    #     once. They are read-only collectors with no ordering dependency, so
+    #     overlapping their subprocess/network waits collapses the slowest phase
+    #     with no loss of adaptivity: the deeper discovery/vuln/exploit choices
+    #     still go through the closed loop below, now seeded with full recon.
+    pre = [m for m in candidates
+           if MODULES[m][0] in ("recon", "fingerprint") and MODULES[m][1] != "__builtin__"]
+    if pre and not (cancelled and cancelled()):
+        res_map = _parallel_tool_runs(pre, url, host, allow_internal, cookies, authz)
+        for mod in sorted(pre, key=lambda m: PHASE_ORDER.index(MODULES[m][0])):
+            res = res_map.get(mod)
+            if res is None:
+                continue
+            a = _attempt_from_tool(mod, MODULES[mod][0], res, lang)
+            concl = _interpret(client, mod, res, lang)
+            if concl:
+                a.rationale = concl
+            if a.steps:
+                tag = "并行侦察 · " if lang == "zh" else "parallel recon · "
+                a.steps[0].note = tag + (a.steps[0].note or "")
+            _emit(attempts, a, on_attempt)
+            run_set.add(mod)
+            ran.append((mod, len(res.get("findings", []) or [])))
+
     # 2) CLOSED LOOP — each step the LLM re-reads the evidence gathered so far and
     #    picks the most valuable next module (from the whole toolbox), or declares
     #    the engagement complete. Guards: the selection is always covered before a
     #    "done" is honoured, and a step budget bounds adaptive exploration.
-    run_set: set[str] = set()
-    ran: list[tuple[str, int]] = []
     budget = max(max_steps, len(selected_mods))
     while budget > 0:
         if cancelled and cancelled():

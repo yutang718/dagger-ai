@@ -66,6 +66,11 @@ _ADDITIVE = {
         ("login_pass_field", "VARCHAR(80) DEFAULT 'password'"),
         ("login_token_path", "VARCHAR(120) DEFAULT 'token'"),
     ],
+    "findings": [
+        ("cvss", "FLOAT DEFAULT 0"),
+        ("cvss_vector", "VARCHAR(60) DEFAULT ''"),
+        ("cwe", "VARCHAR(20) DEFAULT ''"),
+    ],
 }
 
 

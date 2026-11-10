@@ -202,6 +202,7 @@ def nuclei(target, options=None, timeout=600):
         info = d.get("info", {})
         cls = info.get("classification", {}) or {}
         cves = ",".join(cls.get("cve-id", []) or [])
+        cwe = ",".join(str(c) for c in (cls.get("cwe-id", []) or []))
         findings.append({
             "title": info.get("name", d.get("template-id", "nuclei finding")),
             "severity": (info.get("severity", "info") or "info").lower(),
@@ -209,6 +210,10 @@ def nuclei(target, options=None, timeout=600):
             "evidence": (d.get("matched-at") or d.get("host", "")) + (f"  [{cves}]" if cves else ""),
             "description": info.get("description", "") or f"nuclei template {d.get('template-id','')} matched.",
             "remediation": info.get("remediation", "") or "Review and patch per the referenced template/CVE.",
+            # Real scores shipped by the template, used verbatim when present.
+            "cvss": cls.get("cvss-score"),
+            "cvss_vector": cls.get("cvss-metrics", ""),
+            "cwe": cwe,
         })
     return _result("nuclei", cmd, rc, out, ms, findings, obs, error=err)
 

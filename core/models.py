@@ -142,6 +142,9 @@ class Finding(Base):
     attempt_id = Column(Integer, ForeignKey("attempts.id", ondelete="SET NULL"), nullable=True)
     title = Column(String(300))
     severity = Column(String(20), default="info")
+    cvss = Column(Float, default=0.0)            # CVSS v3.1 base score
+    cvss_vector = Column(String(60), default="")  # e.g. CVSS:3.1/AV:N/...
+    cwe = Column(String(20), default="")          # e.g. CWE-89
     owasp = Column(String(20), default="")
     atlas = Column(String(40), default="")
     description = Column(Text, default="")

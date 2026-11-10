@@ -14,7 +14,7 @@ import httpx
 
 from sqlalchemy import select
 
-from . import config, profile, taxonomy
+from . import config, profile, scoring, taxonomy
 from .db import SessionLocal
 from .models import Attempt, Campaign, Finding, Run, Step, Target
 from .orchestrators import AttackerAgent
@@ -215,9 +215,12 @@ def _persist(db, run_id, a, probe, ctx):
             if _dupe(f.get("title", ""), f.get("owasp", ""), f.get("evidence", "")):
                 continue
             fs = f.get("severity", "info")
+            scoring.enrich_finding(f)   # fill cvss / cvss_vector / cwe
             db.add(Finding(
                 run_id=run_id, attempt_id=row.id,
                 title=f.get("title", "finding"), severity=fs,
+                cvss=f.get("cvss", 0.0), cvss_vector=f.get("cvss_vector", ""),
+                cwe=f.get("cwe", ""),
                 owasp=f.get("owasp", ""), atlas=f.get("mitre", ""),
                 description=f.get("description", ""), evidence=f.get("evidence", ""),
                 remediation=f.get("remediation", "")))
@@ -233,10 +236,13 @@ def _persist(db, run_id, a, probe, ctx):
 
 def _finding(run_id, attempt_id, probe, a) -> Finding:
     owlabel = taxonomy.owasp_label(probe.owasp)
+    sc = scoring.enrich_finding({"severity": probe.severity, "owasp": probe.owasp,
+                                 "title": probe.name, "evidence": a.evidence or ""})
     return Finding(
         run_id=run_id, attempt_id=attempt_id,
         title=f"{probe.name} — {owlabel}",
-        severity=probe.severity, owasp=probe.owasp, atlas=probe.mitre,
+        severity=probe.severity, cvss=sc["cvss"], cvss_vector=sc["cvss_vector"], cwe=sc["cwe"],
+        owasp=probe.owasp, atlas=probe.mitre,
         description=f"{probe.description}\n\nTechnique: {a.technique}\nJudge: {a.rationale}",
         evidence=a.evidence or "(see attempt steps)",
         remediation=probe.remediation,

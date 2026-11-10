@@ -67,5 +67,9 @@ TOOL_RUNNER_URL = _env("DAGGER_TOOL_RUNNER_URL", default="http://tool-runner:902
 TOOL_RUNNER_TOKEN = _env("DAGGER_TOOL_RUNNER_TOKEN", default="")
 # Max tool invocations per engagement (budget guard).
 MAX_TOOL_STEPS = int(_env("DAGGER_MAX_TOOL_STEPS", default="12"))
+# How many independent recon/fingerprint tools may run concurrently. The slow
+# part of each is a subprocess / network wait, so overlapping them cuts the
+# recon phase wall-clock sharply without adding host load of concern.
+PARALLEL_WORKERS = int(_env("DAGGER_PARALLEL_WORKERS", default="5"))
 
-VERSION = "1.12.3"
+VERSION = "1.13.0"

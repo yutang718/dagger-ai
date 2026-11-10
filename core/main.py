@@ -11,13 +11,13 @@ import re
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import auth, config, profile, settings, taxonomy, tools_client, translations
+from . import auth, config, profile, report, scoring, settings, taxonomy, tools_client, translations
 from .db import get_session, init_db
 from .engine import start_run, stop_run
 from .llm_client import LLMClient
@@ -326,15 +326,25 @@ def target_profile(tid: int, _: str = auth.auth_dep, db: Session = Depends(get_s
             findings.append({"title": f.title, "severity": f.severity, "owasp": f.owasp,
                              "evidence": f.evidence})
             sev[f.severity] = sev.get(f.severity, 0) + 1
+            # score pre-scoring rows at read time (CVSS band + CWE mapping)
+            _sc = scoring.enrich_finding({"severity": f.severity, "owasp": f.owasp or "",
+                                          "title": f.title, "evidence": f.evidence or "",
+                                          "cvss": f.cvss or 0.0, "cvss_vector": f.cvss_vector or "",
+                                          "cwe": f.cwe or ""})
             # vulnerabilities grouped by issue class; count = distinct issues in it
             key = (_cls(f.title).lower(), f.owasp or "", f.severity)
             v = vulns.get(key)
             if v:
                 v["count"] += 1
+                if _sc["cvss"] > v["cvss"]:
+                    v["cvss"], v["cvss_vector"] = _sc["cvss"], _sc["cvss_vector"]
+                v["cwe"] = v["cwe"] or _sc["cwe"]
             else:
                 vulns[key] = {"title": _cls(f.title), "severity": f.severity, "owasp": f.owasp,
                               "atlas": f.atlas, "description": f.description,
-                              "remediation": f.remediation, "evidence": f.evidence, "count": 1}
+                              "remediation": f.remediation, "evidence": f.evidence, "count": 1,
+                              "cvss": _sc["cvss"], "cvss_vector": _sc["cvss_vector"],
+                              "cwe": _sc["cwe"]}
         last = db.scalar(select(func.max(Run.finished_at)).where(Run.id.in_(run_ids)))
         first = db.scalar(select(func.min(Run.started_at)).where(Run.id.in_(run_ids)))
         # Executive summary prose: the operator writes one per run (stored as the
@@ -356,7 +366,8 @@ def target_profile(tid: int, _: str = auth.auth_dep, db: Session = Depends(get_s
         "runs": len(run_ids),
         "findings_by_sev": sev,
         "findings_total": sum(sev.values()),
-        "vulnerabilities": sorted(vulns.values(), key=lambda v: (_rank.get(v["severity"], 0), v["count"]),
+        "vulnerabilities": sorted(vulns.values(),
+                                  key=lambda v: (v.get("cvss", 0), _rank.get(v["severity"], 0), v["count"]),
                                   reverse=True),
         "exec_summary": exec_summary,
         "phases": phases,
@@ -364,6 +375,40 @@ def target_profile(tid: int, _: str = auth.auth_dep, db: Session = Depends(get_s
         "last_seen": last.isoformat() if last else None,
     })
     return prof
+
+
+def _report_for(tid: int, db: Session) -> dict:
+    t = db.get(Target, tid)
+    if not t:
+        raise HTTPException(404, "target not found")
+    return report.build_report(db, t)
+
+
+def _report_filename(rep: dict, ext: str) -> str:
+    base = re.sub(r"[^\w.\-]+", "_", rep["target"]["name"] or "target")
+    return f"dagger-report-{base}.{ext}"
+
+
+@app.get("/api/targets/{tid}/report.json")
+def report_json(tid: int, _: str = auth.auth_dep, db: Session = Depends(get_session)):
+    rep = _report_for(tid, db)
+    return JSONResponse(rep, headers={
+        "Content-Disposition": f'attachment; filename="{_report_filename(rep, "json")}"'})
+
+
+@app.get("/api/targets/{tid}/report.md")
+def report_md(tid: int, lang: str = "en", _: str = auth.auth_dep,
+              db: Session = Depends(get_session)):
+    rep = _report_for(tid, db)
+    return PlainTextResponse(report.to_markdown(rep, lang), media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{_report_filename(rep, "md")}"'})
+
+
+@app.get("/api/targets/{tid}/report.sarif")
+def report_sarif(tid: int, _: str = auth.auth_dep, db: Session = Depends(get_session)):
+    rep = _report_for(tid, db)
+    return JSONResponse(report.to_sarif(rep), headers={
+        "Content-Disposition": f'attachment; filename="{_report_filename(rep, "sarif")}"'})
 
 
 @app.post("/api/targets/{tid}/authorize")
@@ -551,10 +596,17 @@ def run_detail(rid: int, _: str = auth.auth_dep, db: Session = Depends(get_sessi
                        "note": s.note, "latency_ms": s.latency_ms} for s in steps],
         })
     findings = db.scalars(select(Finding).where(Finding.run_id == rid)).all()
-    out_findings = [{
-        "id": f.id, "title": f.title, "severity": f.severity, "owasp": f.owasp, "atlas": f.atlas,
-        "description": f.description, "evidence": f.evidence, "remediation": f.remediation,
-    } for f in findings]
+    out_findings = []
+    for f in findings:
+        d = {"id": f.id, "title": f.title, "severity": f.severity,
+             "cvss": f.cvss or 0.0, "cvss_vector": f.cvss_vector or "", "cwe": f.cwe or "",
+             "owasp": f.owasp, "atlas": f.atlas,
+             "description": f.description, "evidence": f.evidence, "remediation": f.remediation}
+        scoring.enrich_finding(d)   # score pre-scoring rows at read time
+        out_findings.append(d)
+    # Highest risk first — CVSS, then severity rank as a tiebreak.
+    out_findings.sort(key=lambda x: (x["cvss"], taxonomy.SEVERITY_SCORE.get(x["severity"], 0)),
+                      reverse=True)
     return {"run": _run_brief(r), "attempts": out_attempts, "findings": out_findings}
 
 

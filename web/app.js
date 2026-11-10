@@ -59,6 +59,12 @@ function owaspLabel(code) {
   return m[code] || code;
 }
 const sevLabel = s => (zh() ? (S.meta.severity_zh||{})[s] : s) || s;
+/* CVSS score + CWE chips for a finding (only shown when scored/classified). */
+const cvssNum = f => { const v = f && f.cvss; return (typeof v === "number" ? v : parseFloat(v)) || 0; };
+const cvssChip = f => { const v = cvssNum(f); return v > 0
+  ? `<span class="badge cvss cvss-${cvssBand(v)}" title="CVSS v3.1 base score">CVSS ${v.toFixed(1)}</span>` : ""; };
+const cweChip = f => (f && f.cwe) ? `<span class="tag cwe">${esc(f.cwe)}</span>` : "";
+const cvssBand = v => v>=9?"critical":v>=7?"high":v>=4?"medium":v>0?"low":"info";
 const statusLabel = s => t("status." + s);
 const fmtDate = ts => ts ? new Date(ts + "Z").toLocaleString(zh() ? "zh-CN" : undefined) : "";
 
@@ -545,6 +551,7 @@ async function viewTargets() {
         <td>${x.authorized?`<span class="ok">✔ ${t("common.yes")}</span>`:`<span class="no">✗ ${t("common.no")}</span>`}</td>
         <td style="text-align:right">
           <button class="sm ghost" data-report="${x.id}">${t("targets.report")}</button>
+          <button class="sm ghost" data-export="${x.id}">${t("targets.export")}</button>
           <button class="sm ghost" data-prof="${x.id}">${t("targets.bom")}</button>
           <button class="sm ghost" data-edit="${x.id}">${t("common.edit")}</button>
           ${x.authorized?"":`<button class="sm ghost" data-auth="${x.id}">${t("common.authorize")}</button>`}
@@ -564,6 +571,37 @@ async function viewTargets() {
   main().querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>targetForm(ts.find(x=>x.id==b.dataset.edit)));
   main().querySelectorAll("[data-prof]").forEach(b=>b.onclick=()=>openProfile(b.dataset.prof));
   main().querySelectorAll("[data-report]").forEach(b=>b.onclick=()=>openReport(b.dataset.report));
+  main().querySelectorAll("[data-export]").forEach(b=>b.onclick=()=>exportMenu(b.dataset.export));
+}
+
+/* ---------- report export (Markdown / JSON / SARIF), authed download ---------- */
+async function downloadReport(id, fmt){
+  const q = fmt==="md" ? ("?lang="+(zh()?"zh":"en")) : "";
+  try{
+    const r = await fetch(`/api/targets/${id}/report.${fmt}${q}`,
+      {headers:{"Authorization":"Bearer "+S.token}});
+    if(r.status===401){ logout(); return; }
+    if(!r.ok) throw new Error(r.statusText||"export failed");
+    const blob = await r.blob();
+    const m = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition")||"");
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href=url; a.download = m?m[1]:`dagger-report.${fmt}`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
+    toast(t("report.exported",{f:fmt.toUpperCase()}));
+  }catch(e){ toast(e.message); }
+}
+function exportMenu(id){
+  openDrawer(`<span class="close-x" onclick="closeDrawer()">×</span>
+    <h2>${t("report.exportTitle")}</h2>
+    <p class="note" style="color:var(--muted);margin:6px 0 16px">${t("report.exportHint")}</p>
+    <div class="row" style="gap:10px;flex-wrap:wrap">
+      <button class="exp" data-f="md">Markdown · .md</button>
+      <button class="exp" data-f="json">JSON · .json</button>
+      <button class="exp" data-f="sarif">SARIF · .sarif</button>
+    </div>`);
+  $("#drawer").querySelectorAll(".exp").forEach(b=>b.onclick=()=>downloadReport(id,b.dataset.f));
 }
 
 /* ---------- per-target pentest report (printable / save-as-PDF) ---------- */
@@ -610,9 +648,11 @@ function reportHtml(p, runs){
   const pad=n=>String(n).padStart(2,"0");
   const vulns=(p.vulnerabilities||[]).map((v,i)=>`
     <div class="v">
-      <div class="vh"><span class="fid">F-${pad(i+1)}</span> ${sevChip(v.severity)} <b>${E(v.title)}</b>
-        ${v.count>1?`<span class="x">×${v.count}</span>`:""} ${v.owasp?`<span class="tg">${E(v.owasp)}</span>`:""}
+      <div class="vh"><span class="fid">F-${pad(i+1)}</span> ${sevChip(v.severity)}
+        ${v.cvss>0?`<span class="sc" style="background:#374151">CVSS ${(+v.cvss).toFixed(1)}</span>`:""} <b>${E(v.title)}</b>
+        ${v.count>1?`<span class="x">×${v.count}</span>`:""} ${v.cwe?`<span class="tg">${E(v.cwe)}</span>`:""}${v.owasp?`<span class="tg">${E(v.owasp)}</span>`:""}
         ${v.atlas?`<span class="tg">${E(v.atlas)}</span>`:""}</div>
+      ${v.cvss_vector?`<div class="vl">CVSS</div><pre>${E(v.cvss_vector)}</pre>`:""}
       ${v.description?`<div class="vd">${E(v.description)}</div>`:""}
       ${v.evidence?`<div class="vl">${t("finding.evidence")}</div><pre>${E(v.evidence)}</pre>`:""}
       ${v.remediation?`<div class="vl">${t("finding.remediation")}</div><div class="vr">${E(v.remediation)}</div>`:""}
@@ -1084,8 +1124,8 @@ function findingsList(fs){
     const title=n>1?_findClass(f):f.title;
     return `<div class="step" data-find="${f.id}" style="cursor:pointer">
       <div class="sh"><span><span class="badge sev-${f.severity}">${sevLabel(f.severity)}</span>
-        <b style="margin-left:8px">${esc(title)}</b>${n>1?`<span class="tag" style="margin-left:6px">×${n}</span>`:""}</span>
-        <span class="tag">${f.owasp}</span></div></div>`;
+        ${cvssChip(f)}<b style="margin-left:8px">${esc(title)}</b>${n>1?`<span class="tag" style="margin-left:6px">×${n}</span>`:""}</span>
+        <span>${cweChip(f)}${f.owasp?`<span class="tag">${f.owasp}</span>`:""}</span></div></div>`;
   }).join("");
 }
 function attemptsTable(as){
@@ -1287,7 +1327,9 @@ function openFinding(f){
     <h2>${esc(f.title)}</h2>
     <div class="row" style="gap:8px;margin-bottom:12px">
       <span class="badge sev-${f.severity}">${sevLabel(f.severity)}</span>
+      ${cvssChip(f)}${cweChip(f)}
       ${f.owasp?`<span class="tag">${f.owasp}</span>`:""}${f.atlas?`<span class="tag">${f.atlas}</span>`:""}</div>
+    ${f.cvss_vector?`<div class="evidence mono" style="margin-bottom:12px">${esc(f.cvss_vector)}</div>`:""}
     <div class="lab">${t("finding.description")}</div><div class="md">${mdToHtml(f.description)}</div>
     <div class="lab">${t("finding.evidence")}</div><div class="evidence">${esc(f.evidence)}</div>
     <div class="lab" style="margin-top:14px">${t("finding.remediation")}</div>
