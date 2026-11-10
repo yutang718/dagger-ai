@@ -75,7 +75,17 @@ class AuthorizeIn(BaseModel):
     note: str
 
 
-class CampaignIn(BaseModel):
+class LoginFields(BaseModel):
+    login_mode: str = ""          # "" | form | json | bearer
+    login_url: str = ""
+    login_user: str = ""
+    login_password: str = ""
+    login_user_field: str = "username"
+    login_pass_field: str = "password"
+    login_token_path: str = "token"
+
+
+class CampaignIn(LoginFields):
     name: str
     target_id: int
     probes: list[str]
@@ -90,6 +100,18 @@ class CampaignPatch(BaseModel):
     orchestrator: str | None = None
     max_turns: int | None = None
     session_cookies: str | None = None
+    login_mode: str | None = None
+    login_url: str | None = None
+    login_user: str | None = None
+    login_password: str | None = None
+    login_user_field: str | None = None
+    login_pass_field: str | None = None
+    login_token_path: str | None = None
+
+
+class LoginTestIn(LoginFields):
+    target_id: int | None = None
+    allow_internal: bool = False
 
 
 # ----------------------------------------------------------------- health/meta
@@ -368,9 +390,18 @@ def delete_target(tid: int, _: str = auth.auth_dep, db: Session = Depends(get_se
 
 # ----------------------------------------------------------------- campaigns
 def _campaign_json(c: Campaign):
+    # Never echo the stored password back to the client; expose only whether one
+    # is set so the form can show a "saved" placeholder.
     return {"id": c.id, "name": c.name, "target_id": c.target_id, "probes": c.probes,
             "orchestrator": c.orchestrator, "max_turns": c.max_turns,
             "session_cookies": getattr(c, "session_cookies", "") or "",
+            "login_mode": getattr(c, "login_mode", "") or "",
+            "login_url": getattr(c, "login_url", "") or "",
+            "login_user": getattr(c, "login_user", "") or "",
+            "login_user_field": getattr(c, "login_user_field", "") or "username",
+            "login_pass_field": getattr(c, "login_pass_field", "") or "password",
+            "login_token_path": getattr(c, "login_token_path", "") or "token",
+            "has_login_password": bool(getattr(c, "login_password", "") or ""),
             "created_at": c.created_at.isoformat() if c.created_at else None}
 
 
@@ -386,7 +417,14 @@ def create_campaign(body: CampaignIn, _: str = auth.auth_dep, db: Session = Depe
     turns = max(1, min(body.max_turns, config.MAX_TURNS))
     c = Campaign(name=body.name, target_id=body.target_id, probes=body.probes,
                  orchestrator=body.orchestrator, max_turns=turns,
-                 session_cookies=(body.session_cookies or "")[:8000])
+                 session_cookies=(body.session_cookies or "")[:8000],
+                 login_mode=(body.login_mode or "").strip()[:10],
+                 login_url=(body.login_url or "")[:600],
+                 login_user=(body.login_user or "")[:300],
+                 login_password=(body.login_password or "")[:300],
+                 login_user_field=(body.login_user_field or "username")[:80],
+                 login_pass_field=(body.login_pass_field or "password")[:80],
+                 login_token_path=(body.login_token_path or "token")[:120])
     db.add(c); db.commit()
     return _campaign_json(c)
 
@@ -407,8 +445,56 @@ def update_campaign(cid: int, body: CampaignPatch, _: str = auth.auth_dep,
         c.max_turns = max(1, min(body.max_turns, config.MAX_TURNS))
     if body.session_cookies is not None:
         c.session_cookies = body.session_cookies[:8000]
+    if body.login_mode is not None:
+        c.login_mode = (body.login_mode or "").strip()[:10]
+    if body.login_url is not None:
+        c.login_url = (body.login_url or "")[:600]
+    if body.login_user is not None:
+        c.login_user = (body.login_user or "")[:300]
+    # Empty password means "keep the saved one" (the form never receives it back);
+    # it is cleared when auto-login is turned off (login_mode == "").
+    if body.login_password:
+        c.login_password = body.login_password[:300]
+    if not (c.login_mode or ""):
+        c.login_password = ""
+    if body.login_user_field is not None:
+        c.login_user_field = (body.login_user_field or "username")[:80]
+    if body.login_pass_field is not None:
+        c.login_pass_field = (body.login_pass_field or "password")[:80]
+    if body.login_token_path is not None:
+        c.login_token_path = (body.login_token_path or "token")[:120]
     db.commit()
     return _campaign_json(c)
+
+
+class _LoginCfg:
+    """Lightweight campaign-like holder so login.derive_session can read the
+    login_* attributes without a persisted Campaign."""
+    def __init__(self, body: "LoginTestIn"):
+        self.login_mode = body.login_mode
+        self.login_url = body.login_url
+        self.login_user = body.login_user
+        self.login_password = body.login_password
+        self.login_user_field = body.login_user_field
+        self.login_pass_field = body.login_pass_field
+        self.login_token_path = body.login_token_path
+
+
+@app.post("/api/campaigns/test-login")
+def test_login(body: LoginTestIn, _: str = auth.auth_dep, db: Session = Depends(get_session)):
+    """Try the configured credentials now and report whether a session was
+    captured — without persisting anything or echoing secrets back."""
+    from . import login
+    allow_internal = body.allow_internal
+    if body.target_id:
+        t = db.get(Target, body.target_id)
+        if t:
+            allow_internal = allow_internal or bool(t.allow_internal)
+    sess = login.derive_session(_LoginCfg(body), allow_internal)
+    cookies = sess.get("cookies", "") or ""
+    n = len([x for x in cookies.split(";") if "=" in x]) if cookies else 0
+    return {"ok": bool(sess.get("ok")), "diag": sess.get("diag", ""),
+            "cookies": n, "bearer": bool(sess.get("authz"))}
 
 
 @app.delete("/api/campaigns/{cid}")

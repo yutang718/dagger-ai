@@ -46,26 +46,39 @@ def _targets_file(options):
 
 
 def _cookie_args(tool, options):
-    """Extra argv that make `tool` send the campaign's session cookies, so scans
-    run authenticated. Each tool has its own flag; tools without cookie support
-    get nothing."""
-    c = (options or {}).get("cookies", "")
-    if not c:
-        return []
-    hdr = "Cookie: " + c
-    if tool in ("httpx", "nuclei", "ffuf", "katana"):
-        return ["-H", hdr]
-    if tool == "sqlmap":
-        return ["--cookie=" + c]
-    if tool == "dalfox":
-        return ["-C", c]
-    if tool == "arjun":
-        return ["--headers", hdr]
-    if tool == "wpscan":
-        return ["--cookie-string", c]
-    if tool == "whatweb":
-        return ["--cookie", c]
-    return []
+    """Extra argv that make `tool` send the campaign's session — cookies and/or an
+    Authorization header — so scans run authenticated. Each tool has its own flag;
+    tools without support for a given auth style get nothing for it."""
+    opts = options or {}
+    c = opts.get("cookies", "")
+    az = opts.get("auth_header", "")   # e.g. "Bearer eyJ..."
+    args = []
+    if c:
+        if tool in ("httpx", "nuclei", "ffuf", "katana"):
+            args += ["-H", "Cookie: " + c]
+        elif tool == "sqlmap":
+            args += ["--cookie=" + c]
+        elif tool == "dalfox":
+            args += ["-C", c]
+        elif tool == "arjun":
+            args += ["--headers", "Cookie: " + c]
+        elif tool == "wpscan":
+            args += ["--cookie-string", c]
+        elif tool == "whatweb":
+            args += ["--cookie", c]
+    if az:
+        ah = "Authorization: " + az
+        if tool in ("httpx", "nuclei", "ffuf", "katana", "sqlmap", "dalfox"):
+            args += ["-H", ah]            # all accept repeatable -H
+        elif tool == "arjun":
+            # arjun --headers takes one block; combine with any cookie header.
+            block = ah if not c else "Cookie: " + c + "\\n" + ah
+            if c:
+                args = [a for a in args if a not in ("--headers", "Cookie: " + c)]
+            args += ["--headers", block]
+        elif tool == "wpscan":
+            args += ["--headers", ah]
+    return args
 
 
 def _run(cmd, timeout):
@@ -212,6 +225,9 @@ def _catch_all_baseline(target, options, timeout=20):
     c = (options or {}).get("cookies", "")
     if c:
         cmd += ["-H", "Cookie: " + c]
+    az = (options or {}).get("auth_header", "")
+    if az:
+        cmd += ["-H", "Authorization: " + az]
     cmd += [url]
     rc, out, ms, err = _run(cmd, timeout)
     try:
@@ -728,13 +744,15 @@ _STATIC = (".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ic
 _BACKEND_RE = re.compile(r"\.php|\.asp|\.aspx|\.jsp|\.do|\.action|/api/|/api$|/v\d+/|/graphql|/rest/|/ajax/", re.I)
 
 
-def _fetch(url, cookies, timeout=20, cap=800000):
+def _fetch(url, cookies, timeout=20, cap=800000, auth_header=""):
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     req = urllib.request.Request(url, headers={"User-Agent": "Dagger-AI/jsdisc"})
     if cookies:
         req.add_header("Cookie", cookies)
+    if auth_header:
+        req.add_header("Authorization", auth_header)
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
             return r.read(cap).decode("utf-8", "replace")
@@ -747,9 +765,10 @@ def jsendpoints(target, options=None, timeout=180):
     and JS bundles (stdlib only — no external binary). Returns discovered URLs so
     the operator can scan the real backend attack surface behind the frontend."""
     cookies = (options or {}).get("cookies", "")
+    az = (options or {}).get("auth_header", "")
     base = target
     host = (urlparse(base).hostname or "")
-    html = _fetch(base, cookies)
+    html = _fetch(base, cookies, auth_header=az)
     # JS bundle URLs (same host only — don't fetch arbitrary third-party scripts)
     js_urls = []
     for m in _SCRIPT_SRC.findall(html) + _LINK_JS.findall(html):
@@ -759,7 +778,7 @@ def jsendpoints(target, options=None, timeout=180):
     js_urls = list(dict.fromkeys(js_urls))[:15]
     corpus = html
     for ju in js_urls:
-        c = _fetch(ju, cookies)
+        c = _fetch(ju, cookies, auth_header=az)
         if c:
             corpus += "\n" + c
     # extract candidate strings

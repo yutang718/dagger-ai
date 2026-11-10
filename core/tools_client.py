@@ -45,9 +45,10 @@ def cookie_header(raw: str) -> str:
 
 
 def run(tool: str, target: str, options: dict | None = None, allow_internal: bool = False,
-        cookies: str = "") -> dict:
+        cookies: str = "", auth_header: str = "") -> dict:
     payload = {"tool": tool, "target": target, "options": options or {},
-               "allow_internal": allow_internal, "cookies": cookies or ""}
+               "allow_internal": allow_internal, "cookies": cookies or "",
+               "auth_header": auth_header or ""}
     try:
         with httpx.Client(timeout=config.REQUEST_TIMEOUT + 600) as c:
             r = c.post(f"{config.TOOL_RUNNER_URL}/run", headers=_headers(), json=payload)

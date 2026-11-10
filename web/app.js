@@ -835,6 +835,29 @@ function campaignForm(ts, existing){
     <label>${t("campaignForm.maxTurns")}</label><input id="c-turns" type="number" value="4" min="1" max="8"></div>
     <label>${t("campaignForm.cookies")} <span class="no" style="font-weight:400">${t("campaignForm.cookiesHint")}</span></label>
     <textarea id="c-cookies" rows="3" placeholder="${t("campaignForm.cookiesPh")}" style="font-family:var(--mono);font-size:12px"></textarea>
+    <label>${t("login.section")} <span class="no" style="font-weight:400">${t("login.hint")}</span></label>
+    <select id="c-login-mode">
+      <option value="">${t("login.off")}</option>
+      <option value="form">${t("login.modeForm")}</option>
+      <option value="json">${t("login.modeJson")}</option>
+      <option value="bearer">${t("login.modeBearer")}</option>
+    </select>
+    <div id="login-fields" style="display:none;gap:8px;margin-top:8px">
+      <input id="c-login-url" placeholder="${t("login.url")}">
+      <div class="row" style="gap:8px">
+        <input id="c-login-user" placeholder="${t("login.user")}" autocomplete="off">
+        <input id="c-login-pass" type="password" placeholder="${t("login.pass")}" autocomplete="new-password">
+      </div>
+      <div class="row" style="gap:8px">
+        <input id="c-login-uf" placeholder="${t("login.userField")}" style="font-family:var(--mono);font-size:12px">
+        <input id="c-login-pf" placeholder="${t("login.passField")}" style="font-family:var(--mono);font-size:12px">
+      </div>
+      <input id="c-login-token" placeholder="${t("login.tokenPath")}" style="font-family:var(--mono);font-size:12px;display:none">
+      <div class="row" style="gap:8px;align-items:center">
+        <button type="button" id="c-login-test" class="ghost">${t("login.test")}</button>
+        <span id="login-test-out" class="no" style="font-size:12px"></span>
+      </div>
+    </div>
     <label>${t("campaignForm.probes")} <span id="probe-domain" class="no"></span></label>
     <div id="probe-list" style="display:grid;gap:8px"></div>
     <div class="row" style="margin-top:18px"><button id="c-save">${ed?t("common.save"):t("campaignForm.create")}</button>
@@ -874,7 +897,34 @@ function campaignForm(ts, existing){
     if(existing.orchestrator) $("#c-strat").value = existing.orchestrator;
     if(existing.max_turns) $("#c-turns").value = existing.max_turns;
     $("#c-cookies").value = existing.session_cookies||"";
+    $("#c-login-mode").value = existing.login_mode||"";
+    $("#c-login-url").value = existing.login_url||"";
+    $("#c-login-user").value = existing.login_user||"";
+    $("#c-login-uf").value = existing.login_user_field||"";
+    $("#c-login-pf").value = existing.login_pass_field||"";
+    $("#c-login-token").value = existing.login_token_path||"";
+    if(existing.has_login_password) $("#c-login-pass").placeholder = t("login.passSaved");
   }
+  // Auto-login: show fields only when a mode is picked; token path only for bearer.
+  const syncLogin=()=>{ const m=$("#c-login-mode").value;
+    $("#login-fields").style.display = m ? "grid" : "none";
+    $("#c-login-token").style.display = m==="bearer" ? "block" : "none"; };
+  $("#c-login-mode").onchange=syncLogin; syncLogin();
+  $("#c-login-test").onclick = async () => {
+    const out=$("#login-test-out"); out.textContent=t("login.testing"); out.className="no";
+    try{
+      const r=await api("/campaigns/test-login",{method:"POST",body:JSON.stringify(loginBody(true))});
+      out.textContent = (r.ok?"✓ ":"✗ ") + (r.diag||"");
+      out.className = r.ok ? "ok" : "no";
+    }catch(e){ out.textContent="⚠ "+e.message; out.className="no"; }
+  };
+  const loginBody=(withTarget)=>{ const b={
+    login_mode:$("#c-login-mode").value||"", login_url:$("#c-login-url").value||"",
+    login_user:$("#c-login-user").value||"", login_password:$("#c-login-pass").value||"",
+    login_user_field:$("#c-login-uf").value||"username", login_pass_field:$("#c-login-pf").value||"password",
+    login_token_path:$("#c-login-token").value||"token" };
+    if(withTarget && $("#c-target").value) b.target_id=+$("#c-target").value;
+    return b; };
   const applyChecks=()=>{ if(!ed) return;
     $("#probe-list").querySelectorAll(".probe input").forEach(cb=>{
       cb.checked=(existing.probes||[]).includes(cb.value); cb.dispatchEvent(new Event("change")); }); };
@@ -886,7 +936,7 @@ function campaignForm(ts, existing){
     const kind=($("#c-target").selectedOptions[0]||{}).dataset?.kind;
     const body={ name:$("#c-name").value||"Untitled", probes:chosen,
       orchestrator:$("#c-strat").value, session_cookies:$("#c-cookies").value||"",
-      max_turns: kind==="host" ? 12 : +($("#c-turns").value||4) };
+      max_turns: kind==="host" ? 12 : +($("#c-turns").value||4), ...loginBody(false) };
     if(!ed) body.target_id=+$("#c-target").value;
     try{
       await api(ed?`/campaigns/${existing.id}`:"/campaigns",

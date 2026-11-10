@@ -56,7 +56,16 @@ def snapshot(tag: str = "startup") -> None:
 _ADDITIVE = {
     "targets": [("allow_internal", "BOOLEAN DEFAULT 0")],
     "attempts": [("phase", "VARCHAR(30) DEFAULT ''")],
-    "campaigns": [("session_cookies", "TEXT DEFAULT ''")],
+    "campaigns": [
+        ("session_cookies", "TEXT DEFAULT ''"),
+        ("login_mode", "VARCHAR(10) DEFAULT ''"),
+        ("login_url", "VARCHAR(600) DEFAULT ''"),
+        ("login_user", "VARCHAR(300) DEFAULT ''"),
+        ("login_password", "VARCHAR(300) DEFAULT ''"),
+        ("login_user_field", "VARCHAR(80) DEFAULT 'username'"),
+        ("login_pass_field", "VARCHAR(80) DEFAULT 'password'"),
+        ("login_token_path", "VARCHAR(120) DEFAULT 'token'"),
+    ],
 }
 
 

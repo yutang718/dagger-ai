@@ -49,11 +49,23 @@ def _execute(run_id: int, lang: str = "en") -> None:
         meter = new_meter()
         attacker = AttackerAgent()
         tclient = TargetClient(target)
-        from . import tools_client
-        _ck = tools_client.cookie_header(getattr(campaign, "session_cookies", "") or "")
+        from . import tools_client, login
+        # Auto-login: if credentials are configured, log in now and fold the
+        # captured session (cookies and/or an Authorization token) into the
+        # manual session_cookies so scans run behind the login.
+        _raw_cookies = getattr(campaign, "session_cookies", "") or ""
+        _authz = ""
+        if (getattr(campaign, "login_mode", "") or "").strip():
+            sess = login.derive_session(campaign, bool(target.allow_internal))
+            if sess.get("cookies"):
+                _raw_cookies = (_raw_cookies + "\n" + sess["cookies"]).strip()
+            _authz = sess.get("authz", "") or ""
+        _ck = tools_client.cookie_header(_raw_cookies)
         _hdrs = {"User-Agent": "Dagger-AI/1.0"}
         if _ck:
             _hdrs["Cookie"] = _ck
+        if _authz:
+            _hdrs["Authorization"] = _authz
         http = httpx.Client(timeout=config.REQUEST_TIMEOUT, follow_redirects=True,
                             headers=_hdrs)
         ctx = {"attempts": 0, "success": 0,
@@ -72,7 +84,7 @@ def _execute(run_id: int, lang: str = "en") -> None:
                 min(campaign.max_turns or config.MAX_TOOL_STEPS, config.MAX_TOOL_STEPS),
                 attacker.client, on_attempt=_emit_host,
                 cancelled=lambda: run_id not in _RUNNING, lang=lang,
-                cookies=campaign.session_cookies or "")
+                cookies=_raw_cookies, authz=_authz)
             if run_id not in _RUNNING:
                 run.status = "stopped"
         else:

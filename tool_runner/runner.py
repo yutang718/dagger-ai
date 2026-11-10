@@ -54,6 +54,7 @@ class RunIn(BaseModel):
     options: dict = {}
     allow_internal: bool = False
     cookies: str = ""        # authenticated testing: Cookie header value
+    auth_header: str = ""    # authenticated testing: Authorization header value
 
 
 def _host(target: str) -> str:
@@ -96,6 +97,8 @@ def run(body: RunIn, x_runner_token: str = Header(default="")):
     opts = dict(body.options or {})
     if body.cookies:
         opts["cookies"] = body.cookies
+    if body.auth_header:
+        opts["auth_header"] = body.auth_header
     return fn(body.target, opts)
 
 

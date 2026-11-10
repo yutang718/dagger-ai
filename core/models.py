@@ -56,6 +56,17 @@ class Campaign(Base):
     # "name=value; name2=value2"). Injected as a Cookie header into web probes
     # and the cookie-capable tool-runner tools so scans run logged-in.
     session_cookies = Column(Text, default="")
+    # Auto-login: instead of pasting cookies, give credentials and the platform
+    # logs in before each run, captures the session (Set-Cookie and/or a bearer
+    # token), and injects it into probes + tools so scans reach pages behind the
+    # login. login_mode: "" (off) | "form" | "json" | "bearer".
+    login_mode = Column(String(10), default="")
+    login_url = Column(String(600), default="")
+    login_user = Column(String(300), default="")
+    login_password = Column(String(300), default="")
+    login_user_field = Column(String(80), default="username")
+    login_pass_field = Column(String(80), default="password")
+    login_token_path = Column(String(120), default="token")  # bearer: dotted JSON path
     created_at = Column(DateTime, default=_now)
 
     target = relationship("Target", back_populates="campaigns")

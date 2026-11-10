@@ -123,8 +123,41 @@ class Login(BaseModel):
 def login(body: Login):
     # A07: default/weak credentials accepted, no lockout/rate limiting.
     if DEFAULT_CREDS.get(body.user) == body.password:
-        return {"ok": True, "token": "demo-session-" + body.user, "role": "admin"}
+        tok = "demo-session-" + body.user
+        # Set a session cookie (form/JSON auto-login captures this) AND return a
+        # token in the body (bearer auto-login captures this) — covers both styles.
+        resp = JSONResponse({"ok": True, "token": tok, "role": "admin"})
+        resp.set_cookie("session", tok, httponly=True, samesite="lax")
+        return resp
     return JSONResponse({"ok": False, "error": "invalid"}, status_code=401)
+
+
+def _is_admin(request: Request) -> bool:
+    if request.cookies.get("session") == "demo-session-admin":
+        return True
+    authz = request.headers.get("authorization", "")
+    return authz.strip() == "Bearer demo-session-admin"
+
+
+@app.get("/admin", response_class=PlainTextResponse)
+def admin_panel(request: Request):
+    # Gated internal page: only reachable WITH a logged-in session. An
+    # unauthenticated scan gets 401 and never sees this surface — which is
+    # exactly why authenticated scanning (auto-login) matters.
+    if not _is_admin(request):
+        return PlainTextResponse("401 Unauthorized — login required", status_code=401)
+    return ("ADMIN PANEL\n"
+            "internal-build-key-9931\n"
+            "users: alice.chen@example.com, bob.diallo@example.com, carol.admin@example.com\n"
+            "/admin/exec?cmd=  (A03 command injection, admin-only)")
+
+
+@app.get("/admin/exec", response_class=PlainTextResponse)
+def admin_exec(request: Request, cmd: str = "id"):
+    # A vuln that lives ONLY behind the login — unauthenticated scans miss it.
+    if not _is_admin(request):
+        return PlainTextResponse("401 Unauthorized — login required", status_code=401)
+    return os.popen(f"{cmd} 2>&1").read() or "(no output)"
 
 
 @app.get("/health")
