@@ -512,6 +512,13 @@ _EXPERT = ("You are a CREST-certified (CCT APP & INF) senior penetration tester 
 _PLAIN = ("FORMAT: plain text only. Do NOT use markdown — no ** or __ for bold, no # headings, no "
           "backticks, no tables. Plain sentences, numbered points and simple '- ' bullets are fine.")
 
+# The plan/re-plan ARE rendered as a document in the console (headings become real
+# headings; the live feed strips the markers), so they may use '## ' section
+# headings and '- ' bullets for scannable hierarchy — but no bold/backticks/tables.
+_PLAN_FMT = ("FORMAT: start each of the five sections with a '## ' heading (e.g. '## 1. Attack surface'). "
+             "Under each heading use tight prose or simple '- ' bullets. Keep it scannable, not a wall of "
+             "text. Do NOT use ** or __ for bold, no backticks, no tables, no nested sub-numbering.")
+
 _PLAN_SYS = (_EXPERT +
     "Produce the ENGAGEMENT ATTACK PLAN a lead tester writes before touching the target — a real plan, "
     "not a generic methodology recital. Plan over the FULL arsenal: both the integrated capability "
@@ -521,20 +528,18 @@ _PLAN_SYS = (_EXPERT +
     "cite the specific observed port / service / version / component / CVE / WAF / path / finding that "
     "drives it, and do NOT plan to re-discover what is already known. Be concrete to THIS target; a plan "
     "that would read the same for any host is a failure.\n"
-    "Cover these five sections in order, each on its own line starting with its number and a short label "
-    "followed by a colon (e.g. '1. Attack surface:'), then tight prose or simple dashed bullets:\n"
-    "1. Attack surface — what the intel establishes: exposed services, tech stack, auth/trust boundaries, "
-    "the most exposed entry points.\n"
-    "2. Prioritised attack paths — RANKED by (likelihood exploitable x business impact). For each: the "
-    "hypothesis, the exact evidence it rests on, the capability/tool that proves it, and the result that "
-    "would confirm or kill it.\n"
-    "3. Attack chains — how individual weaknesses combine to escalate (initial access -> foothold -> "
-    "privilege / data / impact) and the realistic worst case.\n"
-    "4. Phased execution — recon -> fingerprint -> discovery -> vuln -> exploit: which capabilities you "
-    "LEAD with given what is already known, and what you deliberately skip because the intel answers it.\n"
-    "5. Pivot & stop criteria — the observations that would change the plan or pull a deeper tool forward, "
-    "and what 'done' looks like.\n"
-    "<=420 words. No preamble, no sign-off. " + _PLAIN)
+    "Cover these five sections in order, each introduced by its '## ' heading:\n"
+    "## 1. Attack surface — what the intel establishes: exposed services, tech stack, auth/trust "
+    "boundaries, the most exposed entry points.\n"
+    "## 2. Prioritised attack paths — RANKED by (likelihood exploitable x business impact). For each: the "
+    "hypothesis, the exact evidence it rests on, the capability/tool that proves it, and what confirms or kills it.\n"
+    "## 3. Attack chains — how weaknesses combine to escalate (initial access -> foothold -> privilege / "
+    "data / impact) and the realistic worst case.\n"
+    "## 4. Phased execution — recon -> fingerprint -> discovery -> vuln -> exploit: which capabilities you "
+    "LEAD with, and what you deliberately skip because the intel answers it.\n"
+    "## 5. Pivot & stop criteria — the observations that would change the plan, and what 'done' looks like.\n"
+    "Be tight — aim for <=320 words total, a few bullets per section, no filler. No preamble, no sign-off. "
+    + _PLAN_FMT)
 _SUM_SYS = (_EXPERT + "Write the executive summary: the overall risk posture, the most critical "
             "issues, any realistic ATTACK CHAIN leading to high impact, and the top remediation "
             "priorities in order. Clear for management, precise for engineers. <=180 words. No preamble. "
@@ -645,9 +650,10 @@ def _next_action(client, url, host, remaining, ran, attempts=None, prior_profile
 
 _REPLAN_SYS = (_EXPERT +
     "New evidence has arrived mid-engagement. Given YOUR ORIGINAL PLAN and the NEW EVIDENCE, "
-    "REVISE the plan: state briefly what the evidence changes, which attack path is now the "
-    "priority and why, and the concrete next moves (tools + what would confirm impact). Keep what "
-    "still holds; drop what the evidence killed. <=220 words. No preamble. " + _PLAIN)
+    "REVISE the plan under three '## ' headings: '## What changed' (what the evidence changes), "
+    "'## Priority path now' (which attack path leads and why), and '## Next moves' (concrete tools + "
+    "what would confirm impact). Keep what still holds; drop what the evidence killed. <=200 words. "
+    "No preamble. " + _PLAN_FMT)
 
 
 def _replan(client, url, host, plan, attempts, lang="en", prior_profile=""):

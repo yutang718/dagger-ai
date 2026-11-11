@@ -502,6 +502,14 @@ button.exp:hover{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) i
 .md .md-h3,.md .md-h4{font-size:13px}
 .md .badge{vertical-align:baseline;margin-right:3px}
 .md .badge+ *{vertical-align:baseline}
+/* Document view (AI plan / summary / validation in the drawer): comfortable
+   reading measure with clear section separation so a long plan stays scannable. */
+.md.doc{font-size:13.5px;line-height:1.72}
+.md.doc .md-h{margin:16px 0 7px;color:var(--accent2);font-size:14px}
+.md.doc .md-h:not(:first-child){border-top:1px solid var(--line);padding-top:15px;margin-top:17px}
+.md.doc ul,.md.doc ol{margin:2px 0 12px;padding-left:19px}
+.md.doc li{margin:5px 0;line-height:1.6}
+.md.doc p{margin:0 0 10px}
 
 /* ---------- themed browser surfaces (selection, scrollbars, focus) ---------- */
 ::selection{background:color-mix(in srgb,var(--accent) 30%,transparent);color:var(--ink)}

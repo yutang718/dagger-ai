@@ -1342,6 +1342,18 @@ async function viewSettings(){
 /* ---------- drawers ---------- */
 function openAttempt(a){
   if(!a) return;
+  // AI meta-steps (plan / re-plan / executive summary / validation) are documents,
+  // not target interactions — render them clean and full-width, without the
+  // "step / attack-prompt / target-response" scaffolding meant for probe attempts.
+  if(["plan","report","validate"].includes(a.phase)){
+    const body = (a.steps||[]).map(s=>s.response).filter(Boolean).join("\n\n") || a.rationale || "";
+    openDrawer(`<span class="close-x" onclick="closeDrawer()">×</span>
+      <h2>${esc(techLabel(a.probe||a.technique))}</h2>
+      <div class="row" style="gap:8px;margin:4px 0 16px">${kindBadge(a)}
+        ${a.phase?`<span class="tag">${esc(phaseLabel(a.phase))}</span>`:""}</div>
+      <div class="md doc">${mdToHtml(body)}</div>`);
+    return;
+  }
   const steps = a.steps.map(s=>`
     <div class="step"><div class="sh"><span>${stepKindBadge(s.role)} ${t("attempt.step")} ${s.idx+1} · ${esc(s.role)}</span>
       <span>${s.latency_ms} ms</span></div>
