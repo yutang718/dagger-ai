@@ -832,15 +832,21 @@ def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
             candidates.append(m)
 
     # 1) PLAN — the LLM writes the strategy from the full catalog + prior intel.
-    plan_txt = _plan(client, url, host, candidates, lang, prior_profile)
-    _emit(attempts, AttemptRec("engagement-plan", f"Plan an authorized assessment of {host}",
-                               [StepRec("plan", f"target={url}  scope-host={host}", plan_txt,
-                                        "AI operator plan")], False, 0.0, phase="plan"), on_attempt)
+    #    This is a LIVING plan: it is a single engagement-plan entry that is revised
+    #    in place as findings come in (see the re-plan below), so the strategy stays
+    #    dynamic without ever showing a second plan.
+    base_plan = _plan(client, url, host, candidates, lang, prior_profile)
+    plan_txt = base_plan
+    plan_rec = AttemptRec("engagement-plan", f"Plan an authorized assessment of {host}",
+                          [StepRec("plan", f"target={url}  scope-host={host}", base_plan,
+                                   "AI operator plan")], False, 0.0, phase="plan")
+    _emit(attempts, plan_rec, on_attempt)
 
     run_set: set[str] = set()
     ran: list[tuple[str, int]] = []
     decisions: list[dict] = []   # working memory: what the agent chose, why, payoff
-    replanned = False            # one adaptive re-plan per engagement (cost guard)
+    revisions: list[str] = []    # phased plan adjustments appended to the one plan
+    _MAX_REVISIONS = 3           # bound the number of re-plans (cost guard)
 
     # 1b) PARALLEL RECON — fire every independent recon/fingerprint gatherer at
     #     once. They are read-only collectors with no ordering dependency, so
@@ -909,18 +915,27 @@ def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
         ran.append((mod, hits))
         decisions.append({"mod": mod, "reason": reason, "hits": hits})
 
-        # 2a) ADAPTIVE RE-PLAN — the first real finding changes the picture, so
-        #     revise the strategy once (bounded) and let the rest of the loop
-        #     execute the updated plan instead of the frozen first-look one.
-        if hits and not replanned and not (cancelled and cancelled()):
-            replanned = True
-            new_plan = _replan(client, url, host, plan_txt, attempts, lang, prior_profile)
-            if new_plan and new_plan != plan_txt:
-                plan_txt = new_plan
-                _emit(attempts, AttemptRec(
-                    "engagement-plan", f"Revise the plan for {host} on new evidence",
-                    [StepRec("plan", f"re-plan after finding via {mod}", plan_txt,
-                             "AI operator re-plan")], False, 0.0, phase="plan"), on_attempt)
+        # 2a) DYNAMIC RE-PLAN — a new finding changes the picture, so revise the
+        #     strategy and APPEND the adjustment as a new phase to the SAME plan
+        #     (updated in place — still one engagement-plan, now evolving). Bounded
+        #     to _MAX_REVISIONS so cost stays controlled.
+        if hits and len(revisions) < _MAX_REVISIONS and not (cancelled and cancelled()):
+            rev = _replan(client, url, host, plan_txt, attempts, lang, prior_profile)
+            if rev:
+                revisions.append((mod, rev))
+                def _rev_hdr(i, m):
+                    return (f"\n\n## ⟳ 计划调整 {i}（{m} 发现后）\n" if lang == "zh"
+                            else f"\n\n## ⟳ Plan revision {i} (after a finding via {m})\n")
+                plan_txt = base_plan + "".join(
+                    _rev_hdr(i + 1, m) + r for i, (m, r) in enumerate(revisions))
+                plan_rec.steps[0].response = plan_txt
+                plan_rec.steps[0].note = (f"AI operator plan · {len(revisions)} 次动态调整" if lang == "zh"
+                                          else f"AI operator plan · {len(revisions)} dynamic revision(s)")
+                if on_attempt:          # re-emit the SAME record → engine updates it in place
+                    try:
+                        on_attempt(plan_rec)
+                    except Exception:
+                        pass
 
     # 2b) AUTO-VERIFY — for EVERY discovered vuln (not just PHP), actively try to
     #     confirm it with a benign PoC; scanner-only CVEs are flagged for manual work.

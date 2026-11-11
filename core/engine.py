@@ -175,6 +175,21 @@ def _execute(run_id: int, lang: str = "en") -> None:
 def _persist(db, run_id, a, probe, ctx):
     """Persist one AttemptRec: its steps, and either its explicit findings list
     (pentest tools) or a probe-derived finding (LLM/web probes)."""
+    # The engagement plan is a single LIVING entry: on a dynamic re-plan the
+    # operator re-emits the same plan record, and we UPDATE it in place rather
+    # than inserting a second "engagement-plan" — the engagement shows one plan
+    # that evolves as findings come in.
+    if getattr(a, "phase", "") == "plan":
+        existing = db.scalar(select(Attempt).where(Attempt.run_id == run_id, Attempt.phase == "plan")
+                             .order_by(Attempt.id).limit(1))
+        if existing:
+            st = db.scalar(select(Step).where(Step.attempt_id == existing.id)
+                           .order_by(Step.idx).limit(1))
+            if st and a.steps:
+                st.response = a.steps[0].response
+                st.note = a.steps[0].note
+            existing.rationale = a.rationale
+            return
     ctx["attempts"] += 1
     # Determine attempt severity + taxonomy.
     if a.findings:
