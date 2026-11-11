@@ -985,6 +985,83 @@ def searchsploit(target, options=None, timeout=150):
                    "\n".join(obs)[:MAX_OUT], 0, findings[:40], obs[:120])
 
 
+# --------------------------------------------------------- hydra (credential brute-force)
+# Discovered port -> (hydra service module). Only services with a credential
+# login that hydra can test; everything else is skipped.
+_HYDRA_SVC = {
+    22: "ssh", 21: "ftp", 23: "telnet", 25: "smtp", 110: "pop3", 143: "imap",
+    389: "ldap3", 636: "ldap3", 445: "smb", 1433: "mssql", 3306: "mysql",
+    5432: "postgres", 3389: "rdp", 5900: "vnc", 6379: "redis", 27017: "mongodb",
+}
+# A SMALL, curated weak/default credential list (login:password). Bounded on
+# purpose: this is a default-credential SAFETY CHECK, not a password cracker, so
+# it stays benign — it will not lock accounts or flood the service.
+_HYDRA_CREDS = [
+    "root:root", "root:toor", "root:password", "root:admin", "root:123456", "root:",
+    "admin:admin", "admin:password", "admin:123456", "admin:admin123", "admin:",
+    "administrator:password", "test:test", "user:user", "guest:guest",
+    "oracle:oracle", "postgres:postgres", "mysql:mysql", "sa:sa", "sa:password",
+    "ubuntu:ubuntu", "pi:raspberry", "ftp:ftp", "anonymous:anonymous", "redis:redis",
+]
+
+
+def hydra(target, options=None, timeout=240):
+    """Bounded weak/default-credential check against the auth services found on
+    the target. Tries a small curated login:password list (stop on first hit,
+    low parallelism) — a default-credential safety check, not a cracker."""
+    if not _which("hydra"):
+        return _result("hydra", "hydra", available=False)
+    options = options or {}
+    host = _host_only(target).split(":")[0]
+    ports = options.get("ports") or ([options["port"]] if options.get("port") else [])
+    svcs = []
+    for p in ports:
+        try:
+            p = int(p)
+        except (TypeError, ValueError):
+            continue
+        if p in _HYDRA_SVC and (p, _HYDRA_SVC[p]) not in svcs:
+            svcs.append((p, _HYDRA_SVC[p]))
+    if not svcs:
+        return _result("hydra", "hydra", obs=["no brute-forceable auth service among the discovered ports"])
+    import os
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+        f.write("\n".join(_HYDRA_CREDS))
+        credfile = f.name
+    findings, obs, all_out, rc, ms = [], [], [], None, 0
+    try:
+        for port, svc in svcs[:5]:          # cap services tested per run
+            # -C login:pass combos · -t 4 low parallelism · -f stop on first hit
+            # -w 5 wait · -I ignore restore file · bounded per-service timeout.
+            cmd = ["hydra", "-C", credfile, "-t", "4", "-f", "-w", "5", "-I",
+                   "-s", str(port), host, svc]
+            rc, out, ms, err = _run(cmd, min(timeout, 150))
+            all_out.append(f"[{svc}:{port}]\n{out or ''}")
+            hit = False
+            for m in re.finditer(r"login:\s*(\S+)\s+password:\s*(\S*)", out or ""):
+                hit = True
+                user, pw = m.group(1), m.group(2) or "(empty)"
+                findings.append({
+                    "title": f"Weak/default credentials on {svc.upper()} ({host}:{port})",
+                    "severity": "critical", "owasp": "A07", "mitre": "T1110.001",
+                    "evidence": f"{svc}://{host}:{port}  {user}:{pw}",
+                    "description": f"Hydra confirmed valid credentials ({user}:{pw}) on the {svc} "
+                                   f"service — a default or weak password that grants direct access.",
+                    "remediation": "Rotate the credential immediately, enforce a strong password "
+                                   "policy, restrict the service to trusted networks / VPN, and enable "
+                                   "MFA where the service supports it."})
+            obs.append(f"{svc}:{port} — " + ("WEAK CREDENTIALS FOUND" if hit
+                                             else "no weak/default creds in the bounded list"))
+    finally:
+        try:
+            os.unlink(credfile)
+        except OSError:
+            pass
+    return _result("hydra", "hydra -C <bounded-list> (weak/default credential check)",
+                   rc, "\n".join(all_out), ms, findings, obs)
+
+
 # tools whose binary name differs from the registry key
 BINARIES = {"testssl": "testssl", "gitsecrets": "git-dumper", "theharvester": "theHarvester",
             "zap": "zaproxy"}
@@ -999,7 +1076,7 @@ REGISTRY = {
     "nikto": nikto, "zap": zap, "dalfox": dalfox, "commix": commix,
     "gau": gau, "arjun": arjun, "testssl": testssl, "wpscan": wpscan, "gitsecrets": gitsecrets,
     "jsendpoints": jsendpoints,
-    "naabu": naabu, "tlsx": tlsx, "searchsploit": searchsploit,
+    "naabu": naabu, "tlsx": tlsx, "searchsploit": searchsploit, "hydra": hydra,
 }
 
 

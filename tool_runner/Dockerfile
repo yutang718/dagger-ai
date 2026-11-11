@@ -14,7 +14,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         nmap sqlmap whatweb ffuf seclists dnsutils theharvester \
         nikto sslscan wafw00f commix arjun testssl.sh wpscan zaproxy \
-        exploitdb libpcap-dev \
+        hydra exploitdb libpcap-dev \
         golang-go git ca-certificates curl python3-pip \
         python3 python3-fastapi python3-uvicorn python3-pydantic \
     && rm -rf /var/lib/apt/lists/*

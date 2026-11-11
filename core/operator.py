@@ -48,6 +48,7 @@ MODULES = {
     "xss_dalfox":          ("exploit",     "dalfox"),
     "cmdi_commix":         ("exploit",     "commix"),
     "secrets_gitsecrets":  ("exploit",     "gitsecrets"),
+    "bruteforce_hydra":    ("exploit",     "hydra"),
     "web_probes":          ("exploit",     "__builtin__"),
 }
 PHASE_ORDER = ["recon", "fingerprint", "discovery", "vuln", "exploit"]
@@ -78,6 +79,7 @@ MODULE_META = {
     "xss_dalfox": ("dalfox XSS validation", "dalfox"),
     "cmdi_commix": ("commix command-injection validation", "commix"),
     "secrets_gitsecrets": ("Exposed .git → secret scan", "git-dumper+trufflehog"),
+    "bruteforce_hydra": ("Hydra weak/default-credential check on discovered auth services (SSH/MySQL/LDAP/RDP/FTP…)", "hydra"),
     "web_probes": ("Built-in web probes (OWASP)", "builtin"),
 }
 
@@ -184,7 +186,26 @@ def _tool_invocation(tool: str, url: str, host: str, attempts=None):
         return host, None
     if tool == "searchsploit":
         return host, {"terms": _service_terms(attempts)}
+    if tool == "hydra":
+        # Brute-force the auth services actually discovered on this host.
+        return host, {"ports": _discovered_ports(attempts)}
     return url, None
+
+
+_PORT_OPEN = re.compile(r"(\d{1,5})/(?:tcp|udp)\s+open", re.I)
+
+
+def _discovered_ports(attempts) -> list:
+    """Open TCP/UDP ports seen in recon output (nmap / naabu), so a host-oriented
+    exploit tool (hydra) can be pointed only at services that are actually up."""
+    ports = set()
+    for a in (attempts or []):
+        for s in (getattr(a, "steps", None) or []):
+            for m in _PORT_OPEN.finditer(s.response or ""):
+                p = int(m.group(1))
+                if 0 < p < 65536:
+                    ports.add(p)
+    return sorted(ports)
 
 
 def _is_cidr(s: str) -> bool:
@@ -580,7 +601,8 @@ _NEXT_SYS = (
     "the current evidence suggests is most likely exploitable and impactful, generally following the "
     "kill-chain order (recon → fingerprint → discovery → vuln → exploit) but pulling a deeper/targeted "
     "tool forward when evidence justifies it (e.g. a WordPress banner → cms_wpscan; a product+version → "
-    "exploits_searchsploit; discovered parameters → an injection validator). You MUST pick a module id "
+    "exploits_searchsploit; discovered parameters → an injection validator; exposed auth services such as "
+    "SSH/MySQL/LDAP/RDP/FTP → bruteforce_hydra for a bounded weak/default-credential check). You MUST pick a module id "
     "that appears in the catalog. Only answer done=true once the available high-value modules are "
     "exhausted and nothing in the evidence warrants further action. "
     'Reply ONLY with JSON: {"module": "<module_id>", "reason": "<one expert sentence>"} '
