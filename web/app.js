@@ -858,6 +858,14 @@ function authorizeForm(id){
 }
 
 /* ---------- campaigns ---------- */
+/* Compact modules cell: a count plus a 2-line chip preview (faded), so a
+   campaign's 20+ modules stay scannable instead of overflowing the row. */
+function modulesCell(probes){
+  const n = (probes||[]).length;
+  if(!n) return "—";
+  return `<div class="modcell"><span class="modn">${n} ${t("col.modules")}</span>
+    <div class="modchips">${probes.map(p=>`<span class="tag">${esc(p)}</span>`).join("")}</div></div>`;
+}
 async function viewCampaigns() {
   const [cs, ts] = await Promise.all([api("/campaigns"), api("/targets")]);
   const tmap = Object.fromEntries(ts.map(x=>[x.id,x]));
@@ -868,7 +876,7 @@ async function viewCampaigns() {
       <th>${t("col.probes")}</th><th>${t("col.strategy")}</th><th></th></tr></thead><tbody>
       ${cs.map(c=>`<tr><td><b>${esc(c.name)}</b></td>
         <td>${esc(tmap[c.target_id]?.name||"—")}</td>
-        <td>${(c.probes||[]).map(p=>`<span class="tag">${p}</span>`).join(" ")}</td>
+        <td>${modulesCell(c.probes)}</td>
         <td>${esc(strategyLabel(c.orchestrator))}</td>
         <td style="text-align:right"><button class="sm" data-run="${c.id}">▶ ${t("common.run")}</button>
           <button class="sm ghost" data-edit="${c.id}">${t("common.edit")}</button>
@@ -1017,23 +1025,27 @@ function campaignForm(ts, existing){
 
 /* ---------- runs ---------- */
 async function viewRuns(){
-  const rs = await api("/runs");
+  const [rs, cs, ts] = await Promise.all([api("/runs"), api("/campaigns"), api("/targets")]);
+  const cmap = Object.fromEntries(cs.map(c=>[c.id,c])), tmap = Object.fromEntries(ts.map(x=>[x.id,x]));
+  const tgtName = r => { const c = cmap[r.campaign_id]; const tg = c && tmap[c.target_id]; return tg ? tg.name : "—"; };
   main().innerHTML = `<h1>${t("runs.title")}</h1><p class="lead">${t("runs.lead")}</p>
-    <div class="panel">${runsTable(rs)}</div>`;
+    <div class="panel">${runsTable(rs, tgtName)}</div>`;
   bindRunRows();
 }
-function runsTable(rs){
+function runsTable(rs, tgtName){
   if(!rs||!rs.length) return `<div class="empty">${t("runs.empty")}</div>`;
-  return `<table><thead><tr><th>${t("col.run")}</th><th>${t("col.status")}</th><th>${t("col.attempts")}</th>
+  const tn = tgtName || (()=>"—");
+  return `<table><thead><tr><th>${t("col.run")}</th><th>${t("col.target")}</th><th>${t("col.status")}</th><th>${t("col.attempts")}</th>
     <th>${t("col.successes")}</th><th>${t("col.worst")}</th><th>${t("col.tokens")}</th><th>${t("col.cost")}</th>
     <th>${t("col.started")}</th></tr></thead><tbody>
-    ${rs.map(r=>{const s=r.summary||{};const u=s.usage||{};return `<tr data-run="${r.id}" style="cursor:pointer">
+    ${rs.map(r=>{const s=r.summary||{};const u=s.usage||{};return `<tr data-run="${r.id}" class="rowlink">
       <td><b>#${r.id}</b></td>
+      <td>${esc(tn(r))}</td>
       <td><span class="status ${r.status}">${r.status==="running"?'<span class="spin"></span> ':''}${statusLabel(r.status)}</span></td>
-      <td>${s.attempts??"—"}</td><td>${s.successes??"—"}</td>
+      <td class="num">${s.attempts??"—"}</td><td class="num">${s.successes??"—"}</td>
       <td>${s.worst?`<span class="badge sev-${s.worst}">${sevLabel(s.worst)}</span>`:"—"}</td>
-      <td class="mono" style="font-size:12px">${u.total_tokens?u.total_tokens.toLocaleString():"—"}</td>
-      <td>${u.cost_usd?`<span class="ucost">~$${u.cost_usd.toFixed(4)}</span>`:"—"}</td>
+      <td class="mono num" style="font-size:12px">${u.total_tokens?u.total_tokens.toLocaleString():"—"}</td>
+      <td class="num">${u.cost_usd?`<span class="ucost">~$${u.cost_usd.toFixed(4)}</span>`:"—"}</td>
       <td class="no">${fmtDate(r.started_at)}</td></tr>`;}).join("")}
     </tbody></table>`;
 }

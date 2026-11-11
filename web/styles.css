@@ -121,8 +121,11 @@ h1{font-size:22px;margin:0 0 4px} .lead{color:var(--muted);margin:0 0 22px}
 
 /* cards */
 .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
-.kpi .n{font-size:30px;font-weight:800} .kpi .l{color:var(--muted);font-size:12px;margin-top:4px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;transition:border-color .15s,transform .15s}
+.kpi{position:relative}
+.kpi:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+.kpi .n{font-size:30px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.01em;line-height:1.1}
+.kpi .l{color:var(--muted);font-size:11px;margin-top:5px;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:18px}
 .panel h3{margin:0 0 14px;font-size:15px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
@@ -130,9 +133,23 @@ h1{font-size:22px;margin:0 0 4px} .lead{color:var(--muted);margin:0 0 22px}
 
 /* table */
 table{width:100%;border-collapse:collapse}
-th,td{text-align:left;padding:11px 10px;border-bottom:1px solid var(--line);font-size:13px}
-th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+th,td{text-align:left;padding:10px 10px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:middle}
+th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em;
+  position:sticky;top:0;background:var(--panel);z-index:1}
+tbody tr{transition:background .12s}
 tr:hover td{background:var(--panel2)}
+td.num{font-variant-numeric:tabular-nums}
+/* clickable rows get a left-accent + pointer so the affordance is obvious */
+tr.rowlink{cursor:pointer}
+tr.rowlink td:first-child{border-left:2px solid transparent;transition:border-color .12s}
+tr.rowlink:hover td:first-child{border-left-color:var(--accent)}
+/* compact modules cell: count + faded 2-line chip preview (no row overflow) */
+.modcell{max-width:460px}
+.modn{display:inline-block;font-size:10px;color:var(--muted);font-weight:700;margin-bottom:5px;
+  text-transform:uppercase;letter-spacing:.05em}
+.modchips{display:flex;flex-wrap:wrap;gap:4px;max-height:48px;overflow:hidden;
+  -webkit-mask-image:linear-gradient(to bottom,#000 62%,transparent);
+  mask-image:linear-gradient(to bottom,#000 62%,transparent)}
 
 /* badges */
 .badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700}
@@ -401,7 +418,9 @@ button.exp:hover{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) i
 .pb-body{border-top:1px solid var(--line);padding:4px 17px 17px}
 .pb-phase.collapsed .pb-body{display:none}
 .pb-tasks{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:11px;margin-top:13px}
-.pb-task{border:1px solid var(--line);border-radius:11px;padding:12px 13px;background:var(--panel2);min-width:0}
+.pb-task{border:1px solid var(--line);border-radius:11px;padding:12px 13px;background:var(--panel2);min-width:0;
+  transition:border-color .13s}
+.pb-task:hover{border-color:color-mix(in srgb,var(--accent) 35%,var(--line))}
 .pb-task h4{font-size:13px;font-weight:600;margin:0 0 3px;display:flex;gap:8px;align-items:baseline}
 .pb-task h4 .pb-k{font-family:var(--mono);font-size:11px;color:var(--accent);flex:0 0 auto}
 .pb-te{color:var(--muted);font-size:11px;margin-bottom:9px}
@@ -409,8 +428,11 @@ button.exp:hover{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) i
 .pb-tool{font-family:var(--mono);font-size:11px;padding:3px 8px;border-radius:7px;background:var(--panel);
   border:1px solid var(--line);color:var(--ink);opacity:.9;white-space:nowrap}
 .pb-cmds{margin-top:9px;display:flex;flex-direction:column;gap:5px}
-.pb-cmd{font-family:var(--mono);font-size:11px;color:var(--ink);opacity:.82;background:var(--code-bg);
-  border:1px solid var(--line);border-radius:7px;padding:6px 9px;overflow-x:auto;white-space:nowrap}
+/* Commands WRAP rather than clip — a reference playbook must show the full
+   command, never a truncated one with no cue that it continues. */
+.pb-cmd{font-family:var(--mono);font-size:11px;color:var(--ink);opacity:.86;background:var(--code-bg);
+  border:1px solid var(--line);border-radius:7px;padding:6px 9px;white-space:pre-wrap;
+  word-break:break-word;line-height:1.5}
 @media (max-width:560px){
   .pb-phase{padding-left:44px}
   .pb-phase::before{left:16px}
