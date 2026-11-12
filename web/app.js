@@ -1069,7 +1069,8 @@ function renderRun(d){
   const plan=d.attempts.find(a=>a.phase==="plan");
   const report=d.attempts.find(a=>a.phase==="report");
   const validation=d.attempts.find(a=>a.phase==="validate");
-  const steps=d.attempts.filter(a=>!["plan","report","validate"].includes(a.phase));
+  const postexp=d.attempts.find(a=>a.phase==="postexploit");
+  const steps=d.attempts.filter(a=>!["plan","report","validate","postexploit"].includes(a.phase));
   main().innerHTML = `
     <div class="spread"><div><h1>${t("run.title")} #${r.id} <span class="status ${r.status}">
       ${live?'<span class="spin"></span> ':''}${statusLabel(r.status)}</span></h1>
@@ -1084,6 +1085,7 @@ function renderRun(d){
     <div class="panel"><h3>${t("run.findingsTitle",{n:dedupFindings(d.findings).length})}</h3>
       <div class="scrollbox">${findingsList(d.findings)}</div></div>
     <div class="panel"><h3>${t("run.phasesTitle")}</h3>${phaseGroups(steps)}</div>
+    ${postexp?playbookPanel(t("run.postexploit"),postexp):""}
     ${validation?playbookPanel(t("run.validation"),validation):""}
     ${report?playbookPanel(t("run.execSummary"),report):""}`;
   $("#back-runs").onclick=()=>show("runs");
@@ -1345,7 +1347,7 @@ function openAttempt(a){
   // AI meta-steps (plan / re-plan / executive summary / validation) are documents,
   // not target interactions — render them clean and full-width, without the
   // "step / attack-prompt / target-response" scaffolding meant for probe attempts.
-  if(["plan","report","validate"].includes(a.phase)){
+  if(["plan","report","validate","postexploit"].includes(a.phase)){
     const body = (a.steps||[]).map(s=>s.response).filter(Boolean).join("\n\n") || a.rationale || "";
     openDrawer(`<span class="close-x" onclick="closeDrawer()">×</span>
       <h2>${esc(techLabel(a.probe||a.technique))}</h2>
@@ -1402,7 +1404,7 @@ const sevScore = s => ({critical:5,high:4,medium:3,low:2,info:1}[s]||0);
 const ICON_AI = `<svg class="kic" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M8 1l1.5 3.8L13.5 6l-3.8 1.5L8 11 6.5 7.5 2.5 6l3.9-1.5z" fill="currentColor"/></svg>`;
 const ICON_TOOL = `<svg class="kic" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M2.8 4.2l3 3-3 3M8 12h5.2" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 function kindOf(a){
-  if(["plan","report","validate"].includes(a.phase)) return "ai";
+  if(["plan","report","validate","postexploit"].includes(a.phase)) return "ai";
   const role=((a.steps&&a.steps[0])||{}).role;
   return (role==="tool"||role==="request") ? "tool" : "ai";
 }
@@ -1480,7 +1482,7 @@ function resultOf(a){
 const isReal = a => a && a.success && a.severity && a.severity !== "info";
 const resultLabel = a => isReal(a) ? t("result.finding") : t("result.detected");
 function isExploit(a){
-  if(["plan","report","validate"].includes(a.phase)) return false;
+  if(["plan","report","validate","postexploit"].includes(a.phase)) return false;
   if(a.severity==="info") return false;           // info = detection/intel, not an exploit
   if((a.technique||"").startsWith("verify:")) return true;
   if(a.phase==="exploit") return true;

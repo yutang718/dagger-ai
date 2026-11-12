@@ -8,6 +8,8 @@ reflected marker) — assessment inputs, not destructive exploits.
 """
 from __future__ import annotations
 
+import base64
+import json
 import re
 import time
 from urllib.parse import (parse_qsl, quote, urlencode, urljoin, urlparse,
@@ -723,3 +725,139 @@ class PHP2Shell(WebProbe):
                                "probe does not exploit the bug.")]
         return [AttemptRec("php2shell-version", self.objective, steps, False, 0.0, "",
                            "No PHP version banner and no PHP signal — PHP2Shell not determinable here.")]
+
+
+# ===================================================================== API-era probes
+# High-value modern-web checks beyond the classic OWASP set: CORS, open redirect
+# and JWT hygiene. All benign — one crafted header / parameter, or passive
+# decoding of a token the app itself returned; nothing destructive.
+
+@register
+class CORSMisconfig(WebProbe):
+    id = "cors_misconfig"
+    name = "CORS Misconfiguration"
+    owasp = "A05"
+    mitre = "T1190"
+    severity = "high"
+    objective = "Check whether the CORS policy reflects an arbitrary Origin (cross-origin data theft)."
+    description = ("A CORS policy that reflects the request Origin into Access-Control-Allow-Origin — "
+                   "especially with Access-Control-Allow-Credentials: true — lets any malicious site read "
+                   "authenticated responses on behalf of a logged-in victim.")
+    remediation = ("Allow only an explicit allowlist of trusted origins; never reflect the Origin header "
+                   "while credentials are enabled; do not use '*' on authenticated endpoints.")
+
+    def execute(self, base_url, http):
+        evil = "https://dagger-cors-probe.example"
+        s, r = _req(http, "GET", base_url,
+                    "Send a cross-origin Origin header and inspect the CORS response headers",
+                    headers={"Origin": evil})
+        if r is None:
+            return [AttemptRec("cors", self.objective, [s], False, 0.0, "", "No response — CORS not assessed.")]
+        h = {k.lower(): v for k, v in r.headers.items()}
+        acao = h.get("access-control-allow-origin", "")
+        acac = (h.get("access-control-allow-credentials", "") or "").lower() == "true"
+        if acao == evil:
+            ev = f"Access-Control-Allow-Origin reflects attacker origin ({acao})" + \
+                 ("  +  Access-Control-Allow-Credentials: true" if acac else "")
+            rat = ("Confirmed: credentialed CORS reflects an arbitrary origin — a malicious site can read "
+                   "authenticated responses." if acac else
+                   "CORS reflects an arbitrary origin; review the allowlist (higher risk if credentials are added).")
+            return [AttemptRec("cors", self.objective, [s], True, 1.0, ev, rat)]
+        return [AttemptRec("cors", self.objective, [s], False, 0.0, "",
+                           "CORS policy does not reflect an arbitrary origin.")]
+
+
+_REDIR_PARAMS = ("next", "url", "redirect", "redirect_uri", "redirecturl", "return", "returnurl",
+                 "return_url", "dest", "destination", "continue", "goto", "redir", "to", "r", "u")
+
+
+@register
+class OpenRedirect(WebProbe):
+    id = "open_redirect"
+    name = "Open Redirect"
+    owasp = "A01"
+    mitre = "T1204"
+    severity = "medium"
+    objective = "Check whether a redirect parameter forwards users to an arbitrary external site."
+    description = ("An unvalidated redirect parameter lets an attacker craft a trusted-looking link that "
+                   "bounces the victim to an attacker-controlled site — used for phishing and to steal "
+                   "OAuth/SSO tokens via the redirect_uri.")
+    remediation = ("Validate redirect targets against an allowlist of internal paths/hosts; never redirect "
+                   "to a user-supplied absolute URL or open redirect_uri value.")
+
+    def execute(self, base_url, http):
+        evil = "https://dagger-redirect-probe.example/x"
+        pr = urlparse(base_url)
+        qs = parse_qsl(pr.query, keep_blank_values=True)
+        names_low = [k.lower() for k, _ in qs]
+        hit = next((p for p in _REDIR_PARAMS if p in names_low), None)
+        if hit:
+            url = _param_url(base_url, hit, evil, "") or base_url
+        else:   # no redirect-ish param present — append a common one to test for it
+            url = urlunparse(pr._replace(query=urlencode(qs + [("next", evil)])))
+        s, r = _req(http, "GET", url,
+                    "Request with a redirect parameter pointing off-site (no auto-follow)",
+                    follow_redirects=False)
+        if r is None:
+            return [AttemptRec("open-redirect", self.objective, [s], False, 0.0, "", "No response.")]
+        loc = r.headers.get("location", "") or ""
+        if r.status_code in (301, 302, 303, 307, 308) and "dagger-redirect-probe.example" in loc:
+            return [AttemptRec("open-redirect", self.objective, [s], True, 1.0, f"Location: {loc[:180]}",
+                               "Confirmed: the redirect parameter forwards users to an arbitrary external URL.")]
+        return [AttemptRec("open-redirect", self.objective, [s], False, 0.0, "",
+                           "No off-site redirect from the tested parameter.")]
+
+
+_JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*")
+
+
+def _b64json(seg: str) -> dict:
+    try:
+        pad = seg + "=" * (-len(seg) % 4)
+        return json.loads(base64.urlsafe_b64decode(pad).decode("utf-8", "replace"))
+    except Exception:
+        return {}
+
+
+@register
+class JWTWeakness(WebProbe):
+    id = "jwt_weakness"
+    name = "JWT Weakness"
+    owasp = "A07"
+    mitre = "T1552"
+    severity = "medium"
+    objective = "Detect a JSON Web Token in the response and flag weak signing (alg=none / symmetric / no expiry)."
+    description = ("JSON Web Tokens with alg=none are accepted unsigned (trivially forgeable); symmetric "
+                   "HS256 tokens are forgeable if the secret is weak or leaked; tokens with no exp claim "
+                   "never expire. The probe only decodes a token the app itself returned — it does not forge one.")
+    remediation = ("Reject alg=none and pin the expected algorithm server-side; use asymmetric signing "
+                   "(RS/ES) with a strong key; set a short exp and rotate keys; validate iss/aud.")
+
+    def execute(self, base_url, http):
+        s, r = _req(http, "GET", base_url,
+                    "Fetch the app and inspect Set-Cookie / body for a JWT", follow_redirects=True)
+        if r is None:
+            return [AttemptRec("jwt", self.objective, [s], False, 0.0, "", "No response.")]
+        blob = " ".join(str(v) for v in r.headers.values()) + " " + (r.text or "")[:4000]
+        m = _JWT_RE.search(blob)
+        if not m:
+            return [AttemptRec("jwt", self.objective, [s], False, 0.0, "",
+                               "No JWT observed in the response headers or body.")]
+        tok = m.group(0)
+        parts = tok.split(".")
+        header = _b64json(parts[0])
+        payload = _b64json(parts[1]) if len(parts) > 1 else {}
+        alg = str(header.get("alg", "") or "").lower()
+        issues = []
+        if alg in ("none", ""):
+            issues.append("alg=none — signature not verified, token is forgeable")
+        elif alg.startswith("hs"):
+            issues.append(f"symmetric alg {alg.upper()} — forgeable if the secret is weak or leaked")
+        if payload and "exp" not in payload:
+            issues.append("no exp claim — the token never expires")
+        if issues:
+            ev = f"JWT found (alg={alg or '?'}); " + "; ".join(issues)
+            return [AttemptRec("jwt", self.objective, [s], True, 1.0, ev, "JWT weakness — " + "; ".join(issues))]
+        return [AttemptRec("jwt", self.objective, [s], False, 0.0,
+                           f"JWT found (alg={alg}), no obvious weakness",
+                           "A JWT is in use; no obvious signing weakness from the header.")]

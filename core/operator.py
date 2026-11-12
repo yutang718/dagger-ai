@@ -304,6 +304,13 @@ def _playbook_engagement(client, url, host, selected, allow_internal, max_steps,
     for a in _exploit_verification(url, attempts, lang, cookies, authz):
         _emit(attempts, a, on_attempt)
 
+    # ---- post-exploitation impact assessment (read-only, online only) ----
+    imp = _impact(client, host, attempts, lang)
+    if imp:
+        _emit(attempts, AttemptRec("post-exploitation", f"Assess realised impact for {host}",
+                                   [StepRec("report", "post-exploitation impact assessment", imp,
+                                            "AI operator impact")], False, 0.0, phase="postexploit"), on_attempt)
+
     # ---- AI executive summary ----
     summary = _summary(client, host, attempts, lang)
     _emit(attempts, AttemptRec("engagement-summary", f"Summarise findings for {host}",
@@ -683,6 +690,34 @@ def _validate(client, host, attempts, lang="en") -> str:
                            temperature=ANALYTIC_TEMP, max_tokens=1536).strip()
 
 
+_IMPACT_SYS = (_EXPERT +
+    "POST-EXPLOITATION IMPACT ASSESSMENT. The confirmed findings below are the foothold already achieved. "
+    "Reason — READ-ONLY, no further intrusion — about the REAL impact: what an attacker now reaches "
+    "(accounts, data stores, secrets, source, internal systems), the realistic privilege-escalation and "
+    "LATERAL-MOVEMENT paths from this foothold, the blast radius and business impact, and the concrete "
+    "read-only checks that would confirm each (e.g. enumerate DB schema, list reachable hosts, read a "
+    "config). Reason only from the ACTUAL findings; if nothing is genuinely exploitable, say the foothold "
+    "is limited and why. Use these '## ' headings: '## Reached' (what the foothold already gives), "
+    "'## Escalation & lateral paths', '## Blast radius & business impact', '## Read-only validation next'. "
+    "<=240 words. No preamble. " + _PLAN_FMT)
+
+
+def _impact(client, host, attempts, lang="en") -> str:
+    """Post-exploitation impact assessment: from the CONFIRMED findings, reason
+    (read-only) about what the foothold reaches, escalation/lateral paths and the
+    blast radius — the step that turns 'exploitable' into 'business impact'. Empty
+    when offline or when nothing material was confirmed."""
+    conf = [f for a in attempts for f in (getattr(a, "findings", None) or [])
+            if f.get("severity") in ("critical", "high", "medium")]
+    if not (client and client.online and conf):
+        return ""
+    brief = "\n".join(f"- [{f.get('severity')}] {f.get('title')} — {str(f.get('evidence',''))[:130]}"
+                      for f in conf[:30])
+    out = client.complete(_IMPACT_SYS + _lang_suffix(lang), f"Host: {host}\nConfirmed findings:\n{brief}",
+                          temperature=ANALYTIC_TEMP, max_tokens=2048)
+    return out.strip()
+
+
 _INTERP_SYS = (
     _EXPERT + "Summarise ONE tool's result for the live feed in a SINGLE short sentence (<=22 words): "
     "what it found and why it matters (exploitability / chaining), or that nothing notable turned up. "
@@ -941,6 +976,14 @@ def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
     #     confirm it with a benign PoC; scanner-only CVEs are flagged for manual work.
     for a in _exploit_verification(url, attempts, lang, cookies, authz):
         _emit(attempts, a, on_attempt)
+
+    # 2c) POST-EXPLOITATION — turn the confirmed foothold into realised business
+    #     impact: what it reaches, escalation/lateral paths, blast radius (read-only).
+    imp = _impact(client, host, attempts, lang)
+    if imp:
+        _emit(attempts, AttemptRec("post-exploitation", f"Assess realised impact for {host}",
+                                   [StepRec("report", "post-exploitation impact assessment", imp,
+                                            "AI operator impact")], False, 0.0, phase="postexploit"), on_attempt)
 
     # 3) VALIDATE — the LLM reviews the findings (true positives / FPs / priorities).
     val = _validate(client, host, attempts, lang)
