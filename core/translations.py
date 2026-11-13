@@ -62,6 +62,15 @@ PROBE_ZH = {
                         "基于版本的 PHP2Shell 检测：CVE-2026-109618（内存破坏）/ CVE-2026-109619（释放后使用）是 "
                         "PHP 核心 5.4–8.5.11 的严重未授权 RCE，正被在野利用。此探针仅从响应头识别 PHP 版本并标记"
                         "易受攻击版本，不进行利用。修复：升级到 8.5.12/8.4.27/8.3.36/8.2.35 及以上。"),
+    "cors_misconfig": ("CORS 配置错误",
+                       "检测 CORS 策略是否反射任意来源（Origin）；若同时开启 Access-Control-Allow-Credentials，"
+                       "任意站点都能以受害者身份读取已认证的响应，造成跨站数据窃取。"),
+    "open_redirect": ("开放重定向",
+                      "测试跳转类参数（next/url/redirect_uri 等）是否未经校验就跳转到任意外部站点，"
+                      "常被用于钓鱼或窃取 OAuth/SSO 回跳令牌。"),
+    "jwt_weakness": ("JWT 弱点",
+                     "被动解码应用自身返回的 JSON Web Token，检查 alg=none（未验签、可伪造）、"
+                     "对称算法（密钥弱或泄露即可伪造）、缺失过期时间（exp）等弱点；只解码，不伪造令牌。"),
 }
 
 # Pentest module Chinese names (keyed by module id from operator.MODULES).

@@ -312,7 +312,7 @@ def _playbook_engagement(client, url, host, selected, allow_internal, max_steps,
                                             "AI operator impact")], False, 0.0, phase="postexploit"), on_attempt)
 
     # ---- AI executive summary ----
-    summary = _summary(client, host, attempts, lang)
+    summary = _summary(client, host, attempts, lang, impact=imp)
     _emit(attempts, AttemptRec("engagement-summary", f"Summarise findings for {host}",
                                [StepRec("report", "executive summary", summary,
                                         "AI operator summary" if client.online else "auto summary")],
@@ -392,11 +392,17 @@ def _web_probe_attempts(url, lang="en", cookies="", authz="") -> list[AttemptRec
                         "description": p.description, "remediation": p.remediation,
                     }]
                 if lang == "zh":   # localize the conclusion shown in the UI
+                    # Keep the probe's own specific, evidence-based rationale — only
+                    # PREPEND the localized headline, never discard the detail (it was
+                    # silently dropped before, losing the "why it matters" explanation
+                    # that English-mode users kept).
+                    detail = (a.rationale or "").strip()
                     if a.success:
                         verb = "检测到" if p.severity == "info" else "确认漏洞"
-                        a.rationale = f"{verb}：{pname}（详见证据）。"
+                        head = f"{verb}：{pname}（详见证据）。"
                     else:
-                        a.rationale = f"未发现 {pname} 问题。"
+                        head = f"未发现 {pname} 问题。"
+                    a.rationale = head + (f" {detail}" if detail and detail != head else "")
                 out.append(a)
     finally:
         http.close()
@@ -522,7 +528,7 @@ _PLAIN = ("FORMAT: plain text only. Do NOT use markdown — no ** or __ for bold
 # The plan/re-plan ARE rendered as a document in the console (headings become real
 # headings; the live feed strips the markers), so they may use '## ' section
 # headings and '- ' bullets for scannable hierarchy — but no bold/backticks/tables.
-_PLAN_FMT = ("FORMAT: start each of the five sections with a '## ' heading (e.g. '## 1. Attack surface'). "
+_PLAN_FMT = ("FORMAT: start each section with a '## ' heading (e.g. '## 1. Attack surface'). "
              "Under each heading use tight prose or simple '- ' bullets. Keep it scannable, not a wall of "
              "text. Do NOT use ** or __ for bold, no backticks, no tables, no nested sub-numbering.")
 
@@ -535,21 +541,29 @@ _PLAN_SYS = (_EXPERT +
     "cite the specific observed port / service / version / component / CVE / WAF / path / finding that "
     "drives it, and do NOT plan to re-discover what is already known. Be concrete to THIS target; a plan "
     "that would read the same for any host is a failure.\n"
-    "Cover these five sections in order, each introduced by its '## ' heading:\n"
+    "Cover these six sections in order, each introduced by its '## ' heading — section 2 is PTES "
+    "Threat Modeling and is a DISTINCT deliverable from section 3's technical ranking; do not merge them:\n"
     "## 1. Attack surface — what the intel establishes: exposed services, tech stack, auth/trust "
     "boundaries, the most exposed entry points.\n"
-    "## 2. Prioritised attack paths — RANKED by (likelihood exploitable x business impact). For each: the "
-    "hypothesis, the exact evidence it rests on, the capability/tool that proves it, and what confirms or kills it.\n"
-    "## 3. Attack chains — how weaknesses combine to escalate (initial access -> foothold -> privilege / "
+    "## 2. Threat model — the business ASSET VALUE at stake here (what data/function this target holds "
+    "and why it matters), the realistic THREAT AGENTS (opportunistic scanner vs. targeted attacker vs. "
+    "insider) and their likely capability/motivation against this specific target, and which asset is "
+    "the highest-value target for each agent type.\n"
+    "## 3. Prioritised attack paths — RANKED by (likelihood exploitable x business impact from section 2). "
+    "For each: the hypothesis, the exact evidence it rests on, the capability/tool that proves it, and "
+    "what confirms or kills it.\n"
+    "## 4. Attack chains — how weaknesses combine to escalate (initial access -> foothold -> privilege / "
     "data / impact) and the realistic worst case.\n"
-    "## 4. Phased execution — recon -> fingerprint -> discovery -> vuln -> exploit: which capabilities you "
+    "## 5. Phased execution — recon -> fingerprint -> discovery -> vuln -> exploit: which capabilities you "
     "LEAD with, and what you deliberately skip because the intel answers it.\n"
-    "## 5. Pivot & stop criteria — the observations that would change the plan, and what 'done' looks like.\n"
-    "Be tight — aim for <=320 words total, a few bullets per section, no filler. No preamble, no sign-off. "
+    "## 6. Pivot & stop criteria — the observations that would change the plan, and what 'done' looks like.\n"
+    "Be tight — aim for <=380 words total, a few bullets per section, no filler. No preamble, no sign-off. "
     + _PLAN_FMT)
 _SUM_SYS = (_EXPERT + "Write the executive summary: the overall risk posture, the most critical "
             "issues, any realistic ATTACK CHAIN leading to high impact, and the top remediation "
-            "priorities in order. Clear for management, precise for engineers. <=180 words. No preamble. "
+            "priorities in order. If a POST-EXPLOITATION IMPACT ASSESSMENT is given, it is the realised "
+            "business impact of the foothold already proven — lead with it, don't just restate finding "
+            "titles. Clear for management, precise for engineers. <=180 words. No preamble. "
             + _PLAIN)
 
 
@@ -580,11 +594,15 @@ def _plan(client, url, host, chosen, lang="en", prior_profile=""):
             "(SQLi, OWASP web). All runs are bounded by the step budget and the authorization gate.")
 
 
-def _summary(client, host, attempts, lang="en"):
+def _summary(client, host, attempts, lang="en", impact=""):
     allf = [f for a in attempts for f in a.findings]
     if client.online and allf:
         brief = "\n".join(f"- [{f.get('severity')}] {f.get('title')} ({f.get('owasp','')})" for f in allf[:40])
-        out = client.complete(_SUM_SYS + _lang_suffix(lang), f"Host: {host}\nFindings:\n{brief}",
+        user = f"Host: {host}\nFindings:\n{brief}"
+        if impact:
+            user += "\n\nPOST-EXPLOITATION IMPACT ASSESSMENT (realised impact of the proven foothold):\n" \
+                    + impact.strip()[:2000]
+        out = client.complete(_SUM_SYS + _lang_suffix(lang), user,
                               temperature=ANALYTIC_TEMP, max_tokens=2048)
         if out.strip():
             return out.strip()
@@ -622,7 +640,9 @@ _NEXT_SYS = (
 _VAL_SYS = (
     _EXPERT + "VALIDATE the findings: for each, judge true-positive vs. needs-manual-verification "
     "vs. likely false-positive with brief reasoning; call out any ATTACK CHAINS (how findings "
-    "combine to escalate impact); and give the top remediation priorities in order. <=170 words. No preamble. "
+    "combine to escalate impact); and give the top remediation priorities in order. If a "
+    "POST-EXPLOITATION IMPACT ASSESSMENT is given, use it as the proven escalation/lateral evidence for "
+    "attack chains — don't re-speculate on impact that assessment already settled. <=170 words. No preamble. "
     + _PLAIN)
 
 
@@ -679,14 +699,18 @@ def _replan(client, url, host, plan, attempts, lang="en", prior_profile=""):
     return out.strip() or plan
 
 
-def _validate(client, host, attempts, lang="en") -> str:
+def _validate(client, host, attempts, lang="en", impact="") -> str:
     allf = [f for a in attempts for f in a.findings]
     if not allf:
         return ""
     brief = "\n".join(
         f"- [{f.get('severity')}] {f.get('title')} ({f.get('owasp','')}) "
         f"evidence: {str(f.get('evidence',''))[:80]}" for f in allf[:40])
-    return client.complete(_VAL_SYS + _lang_suffix(lang), f"Host: {host}\nFindings:\n{brief}",
+    user = f"Host: {host}\nFindings:\n{brief}"
+    if impact:
+        user += "\n\nPOST-EXPLOITATION IMPACT ASSESSMENT (realised impact of the proven foothold):\n" \
+                + impact.strip()[:2000]
+    return client.complete(_VAL_SYS + _lang_suffix(lang), user,
                            temperature=ANALYTIC_TEMP, max_tokens=1536).strip()
 
 
@@ -880,7 +904,7 @@ def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
     run_set: set[str] = set()
     ran: list[tuple[str, int]] = []
     decisions: list[dict] = []   # working memory: what the agent chose, why, payoff
-    revisions: list[str] = []    # phased plan adjustments appended to the one plan
+    revisions: list[tuple[str, str]] = []    # (module, revision text) appended to the one plan
     _MAX_REVISIONS = 3           # bound the number of re-plans (cost guard)
 
     # 1b) PARALLEL RECON — fire every independent recon/fingerprint gatherer at
@@ -986,14 +1010,14 @@ def _agentic_engagement(client, url, host, selected, allow_internal, max_steps,
                                             "AI operator impact")], False, 0.0, phase="postexploit"), on_attempt)
 
     # 3) VALIDATE — the LLM reviews the findings (true positives / FPs / priorities).
-    val = _validate(client, host, attempts, lang)
+    val = _validate(client, host, attempts, lang, impact=imp)
     if val:
         _emit(attempts, AttemptRec("validation", f"Validate findings for {host}",
                                    [StepRec("report", "LLM validation of findings", val,
                                             "AI operator validation")], False, 0.0, phase="validate"), on_attempt)
 
     # 4) SUMMARY — executive summary.
-    summary = _summary(client, host, attempts, lang)
+    summary = _summary(client, host, attempts, lang, impact=imp)
     _emit(attempts, AttemptRec("engagement-summary", f"Summarise findings for {host}",
                                [StepRec("report", "executive summary", summary,
                                         "AI operator summary")], False, 0.0, phase="report"), on_attempt)
