@@ -163,9 +163,16 @@ function show(view) {
   // and use the full horizontal space; every other view stays measured.
   main().classList.toggle("wide", view === "monitor");
   document.querySelectorAll("nav a").forEach(x => x.classList.toggle("active", x.dataset.view === view));
-  ({ dashboard: viewDashboard, targets: viewTargets, campaigns: viewCampaigns,
+  const render = () => ({ dashboard: viewDashboard, targets: viewTargets, campaigns: viewCampaigns,
      playbook: viewPlaybook,
      runs: viewRuns, monitor: viewMonitor, settings: viewSettings }[view] || viewDashboard)();
+  // Smooth cross-fade between views via the View Transitions API. The async view
+  // render runs inside the transition so the old view stays put during its fetch
+  // (no empty flash). Progressive enhancement: unsupported or reduced-motion →
+  // immediate update. Nav chrome stays outside the transition (updates instantly).
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (document.startViewTransition && !reduce) document.startViewTransition(render);
+  else render();
 }
 
 /* ---------- Playbook: penetration-testing methodology map ----------

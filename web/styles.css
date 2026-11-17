@@ -111,9 +111,25 @@ label{display:block;color:var(--muted);font-size:12px;margin:12px 0 5px}
 .ver{color:var(--muted);opacity:.65;font-size:12px}
 .logout{color:var(--muted);padding:6px 8px;border-radius:8px;font-size:12px;white-space:nowrap}
 .logout:hover{color:var(--crit)}
-main{padding:26px 30px;max-width:1280px;width:100%;margin:0 auto;flex:1}
+main{padding:26px 30px;max-width:1280px;width:100%;margin:0 auto;flex:1;view-transition-name:dagger-main}
 @media(max-width:760px){.topbar{min-height:0;padding:10px 16px}.top-controls{width:100%;margin-left:0}
   main{padding:20px 16px}}
+
+/* View Transitions: a quick, soft cross-fade of the main area on view switch
+   (nav chrome stays outside the transition). Honour reduced-motion. */
+::view-transition-old(dagger-main),
+::view-transition-new(dagger-main){animation-duration:.22s;animation-timing-function:cubic-bezier(.4,0,.2,1)}
+@media (prefers-reduced-motion:reduce){
+  ::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none !important}
+}
+/* Defer rendering of long off-screen list rows (feeds, findings, phase steps):
+   content-visibility skips layout/paint until near the scrollport, with an
+   intrinsic-size placeholder so scrollbars don't jump. Ignored where unsupported. */
+@supports (content-visibility:auto){
+  .feed .fev{content-visibility:auto;contain-intrinsic-size:auto 58px}
+  .scrollbox .step{content-visibility:auto;contain-intrinsic-size:auto 46px}
+  .atk{content-visibility:auto;contain-intrinsic-size:auto 46px}
+}
 
 h1{font-size:22px;margin:0 0 4px} .lead{color:var(--muted);margin:0 0 22px}
 .row{display:flex;gap:14px;flex-wrap:wrap}
